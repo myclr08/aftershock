@@ -1,0 +1,526 @@
+# Aftershock: technical design
+
+Status: draft for M0–M6. This document is the reference for implementation; when code and this
+document disagree, fix one of them in the same change.
+
+## 1. Problem and goals
+
+In large .NET solutions a full local build plus all unit tests can take around ten minutes.
+Tests often sit in two or three very large test projects, so selecting tests *per project*
+(as `dotnet-affected` and similar tools do) barely helps: almost every change hits one of the
+big test projects. Many teams also have a quality gate that requires, for example, 85%
+coverage on new code, and developers only find out after pushing.
+
+Aftershock is a VS Code extension that, **on save**:
+
+1. statically finds the **test methods** affected by the change (Roslyn, method-level),
+2. builds only the test projects that contain them and runs only those tests,
+3. computes **new-code coverage** with the same formula SonarQube uses and shows it live,
+   including "how many more lines/conditions are needed to reach the gate",
+4. runs the **Sonar C# rules** of the project's quality profile locally on the saved file and
+   shows issues on new code.
+
+Priorities:
+
+- **xUnit is the first-class test framework** (v2 and v3). NUnit and MSTest are supported too,
+  and are covered by fixtures and tests.
+- **Windows first**, Linux and macOS supported.
+- No dependency on other VS Code extensions (no SonarQube for IDE, no C# Dev Kit
+  requirement).
+- Fast feedback beats completeness, but never silently: when static analysis cannot be
+  trusted, Aftershock falls back to running whole test projects and says why.
+
+## 2. Non-goals
+
+- Writing Sonar rules. Aftershock runs SonarSource's own analyzer package.
+- Depending on SonarQube for IDE or any other extension.
+- Per-test dynamic coverage maps (the NCrunch/dotCover approach). This may come later.
+- Replacing the CI analysis. The pull request analysis on the server stays the definitive
+  result.
+
+## 3. Repository layout
+
+```
+/extension   TypeScript VS Code extension: UI and orchestration
+/analyzer    C# (.NET 8+) long-running process: Roslyn workspace, impact analysis, local rules
+/samples     Fixture solutions used by analyzer tests (xUnit, NUnit, MSTest cases)
+/docs        Design, analyzer CLI contract (docs/analyzer-cli.md), M0 measurement guide
+/scripts     Developer and measurement scripts (scripts/measure-build.ps1)
+```
+
+## 4. Architecture
+
+```
+ VS Code
+ +-------------------------------------------------------------+
+ | extension (TypeScript)                                      |
+ |  save listener -> debounce -> orchestrator                  |
+ |    |-- analyzer client (JSON over stdio) ------------------+|
+ |    |-- build/test runner (dotnet build / dotnet test)      ||
+ |    |-- coverage engine (git diff + Cobertura + formula)    ||
+ |    '-- Sonar client (Web API, token in SecretStorage)      ||
+ |  UI: status bar, output channel, Problems, decorations     ||
+ +------------------------------------------------------------|+
+                                                              |
+ +------------------------------------------------------------v+
+ | analyzer (C#, .NET 8+)                                      |
+ |  MSBuildWorkspace (warm) -> impact analysis (BFS)           |
+ |  CompilationWithAnalyzers + SonarAnalyzer.CSharp (isolated) |
+ +-------------------------------------------------------------+
+```
+
+### 4.1 analyzer (C#)
+
+- Loads the solution as an `MSBuildWorkspace` using `Microsoft.Build.Locator` and
+  `Microsoft.CodeAnalysis.Workspaces.MSBuild`.
+  - `MSBuildLocator.RegisterDefaults()` (or a specific instance) must run before any MSBuild
+    type is loaded. Keep MSBuild-touching code out of `Main`'s method body so the JIT does not
+    load MSBuild types early.
+  - `Microsoft.Build*` packages are referenced with `ExcludeAssets="runtime"` so the SDK's
+    MSBuild is used.
+  - Every `WorkspaceFailed` diagnostic is logged. Load failures are never swallowed. A project
+    that fails to load puts every change touching it into fallback mode (section 5.5).
+- Two modes:
+  1. **One-shot CLI** (built first, testable on its own):
+     `analyzer impact --solution X.sln --base <git-ref> [--json]` prints the impacted tests
+     and their reason chains. The contract is in [analyzer-cli.md](analyzer-cli.md).
+  2. **Server mode**: line-delimited JSON requests and responses over stdio (JSON-RPC 2.0
+     framing is acceptable). The workspace stays warm. On file changes the analyzer updates
+     the in-memory solution with `Solution.WithDocumentText(...)` instead of reloading.
+     Project file changes trigger a reload of the affected projects.
+- Keeps the last analyzed text of every document (a snapshot) so it can compute which
+  members changed between two saves.
+- Logs go to stderr. Stdout carries only protocol messages.
+
+### 4.2 extension (TypeScript)
+
+- Listens to saves of `.cs`, `.csproj`, `.props`, `.targets` and `.json` files and debounces
+  them (`aftershock.debounceMs`, default 1500 ms).
+- Starts, monitors and restarts the analyzer process. Restarts with backoff and reports
+  crashes in the output channel.
+- Runs `dotnet build` / `dotnet test` as child processes. A new save cancels the running job.
+  Cancellation kills the whole process tree: `taskkill /T /F /PID <pid>` on Windows, process
+  group kill on Unix. MSBuild worker nodes and the compiler server are left alone (they are
+  shared and harmless).
+- If a debug session is active (`vscode.debug.activeDebugSession`), no build or test starts.
+  The status bar shows "waiting for debug session" to avoid file-lock conflicts in `bin/`.
+- All UI strings are English, with a Turkish localization: `package.nls.json` /
+  `package.nls.tr.json` for contributions and `vscode.l10n` bundles (`l10n/bundle.l10n.tr.json`)
+  for runtime strings.
+
+## 5. Impact analysis
+
+### 5.1 Changed members
+
+- Compare the saved document with its previous snapshot (line diff).
+- Map each changed line range to the **enclosing member** in the Roslyn syntax tree: method,
+  constructor, destructor, property or indexer accessor, event accessor, operator, conversion
+  operator. Local functions and lambdas map to their containing member.
+- Changes outside any member (usings, attributes on the type, field added or removed, base
+  type list, a new member, primary constructor parameters) mark **every member of that type**
+  as changed. Field initializer changes mark all constructors of the type as changed.
+- Deleted members are resolved in the **old** snapshot's compilation, and their references
+  are searched there, because the symbol no longer exists in the new one.
+- File-level changes (new file, deleted file, renamed type) are handled per type: all members
+  of new types count as changed. Deleted types use the old snapshot.
+
+### 5.2 Caller search (backwards BFS)
+
+- For each changed symbol, find references with `SymbolFinder.FindReferencesAsync` (and
+  `FindCallersAsync` where it is enough), then walk **up** breadth-first: the enclosing member
+  of each reference becomes the next symbol in the queue.
+- **Polymorphism**: add the interface members the symbol implements
+  (`FindImplementedInterfaceMembersAsync` / explicit implementations) and the base members it
+  overrides (`OverriddenMethod` chain) to the queue. A call through `IOrderService.Create`
+  therefore reaches tests that only know the interface. When an abstract or virtual member or
+  an interface member itself changes, implementations and overrides are added as well
+  (`FindImplementationsAsync`, `FindOverridesAsync`).
+- **Properties**: getter and setter uses both count as references. Changes in one accessor
+  follow references to the property.
+- **Constructors**: object creations, `base(...)`/`this(...)` calls and implicit calls
+  through derived constructors count.
+- Implicit calls that Roslyn reports as references (operators, conversions, `foreach`
+  `GetEnumerator`, `Deconstruct`, extension methods, attribute constructors) are followed.
+  Calls that only exist at runtime (reflection, DI-only resolution, source-generated
+  registrations that are not in the compilation) are not visible; see 5.5 and 5.7.
+- Every visited symbol keeps its predecessor so a **reason chain** can be printed, for example:
+  `PremiumCalculator.Calculate <- PolicyService.Create <- PolicyServiceTests.Create_ShouldApplyDiscount`.
+- Limits: at most `aftershock.maxImpactedSymbols` symbols (default 500) and 10 s per request.
+  Hitting either limit triggers the fallback.
+
+### 5.3 Test detection
+
+A method is a **test method** if it has one of these attributes, or an attribute that
+**derives** from one of them (custom `FactAttribute` subclasses are common):
+
+| Framework | Attributes |
+|---|---|
+| xUnit v2 / v3 | `[Fact]`, `[Theory]` (data from `[InlineData]`, `[MemberData]`, `[ClassData]`) |
+| NUnit | `[Test]`, `[TestCase]`, `[TestCaseSource]`, `[Theory]` |
+| MSTest | `[TestMethod]`, `[DataTestMethod]` (with `[DataRow]` / `[DynamicData]`) |
+
+Attribute matching uses the semantic model (full type names and base types), never names
+only.
+
+**Whole-class triggers.** If the BFS reaches any of these parts of a test class, **all tests
+of the class** (and of derived test classes) are impacted:
+
+- constructors, field and property initializers, `Dispose` / `DisposeAsync`,
+- `IAsyncLifetime.InitializeAsync` / `DisposeAsync` (xUnit),
+- fixture types used via `IClassFixture<T>`, `ICollectionFixture<T>` (xUnit; for collection
+  fixtures, all classes in the `[Collection]`), xUnit v3 assembly fixtures,
+- `[SetUp]`, `[TearDown]`, `[OneTimeSetUp]`, `[OneTimeTearDown]` (NUnit),
+- `[TestInitialize]`, `[TestCleanup]`, `[ClassInitialize]`, `[ClassCleanup]` (MSTest),
+- base test classes: reaching a member of an abstract base test class impacts every derived
+  test class.
+
+A changed symbol that is itself a test method (new or edited test) is always selected.
+
+### 5.4 Output
+
+For each impacted test: project, fully qualified class and method name, framework, and the
+shortest reason chain. For fallbacks: the reason and the set of test projects to run in full.
+
+### 5.5 Safety net (fallback)
+
+In these cases Aftershock does not trust static analysis and runs **all tests of every test
+project that depends on the affected projects**. The project graph comes from
+`Solution.GetProjectDependencyGraph()`, so no extra tool is needed.
+
+- A `.csproj`, `Directory.Build.props/targets`, `Directory.Packages.props`, `global.json` or
+  `nuget.config` changed.
+- `appsettings*.json` or a file matching `aftershock.fallbackGlobs` changed.
+- `Program.cs`, `Startup.cs`, or a file containing an `IServiceCollection` extension method
+  (DI registration) changed.
+- The BFS limit or the time limit was hit.
+- The analyzer failed, or the document is not in the workspace (for example a project failed
+  to load).
+
+The reason is always shown in the status bar tooltip and the output channel.
+
+### 5.6 Performance
+
+- First version: reference searches run on demand and are cached per symbol. Cache entries
+  that involve a changed document are invalidated on every update.
+- The analysis time of every request is logged. If typical changes take more than 2 s on a
+  real solution, build a reverse call index at startup (callee -> callers) and update it
+  incrementally per document.
+- The workspace is loaded once in server mode. A full reload is only needed after project
+  file changes.
+
+### 5.7 Known limitations
+
+Static analysis cannot see reflection, DI-only paths (a service resolved by interface whose
+implementation is never referenced from test code), dynamic, `InternalsVisibleTo` tricks
+with reflection, or code generated at runtime. The fallback rules above catch the common DI
+case. "Run all tests" (command) and CI remain the safety net.
+
+## 6. Build and test execution
+
+### 6.1 Build
+
+- Build only the test projects that contain selected tests:
+  `dotnet build <test.csproj> --no-restore -m -p:RunAnalyzers=false -p:TreatWarningsAsErrors=false`
+  (`aftershock.disableAnalyzersInBuild`, default on). CI still runs analyzers; Aftershock runs
+  the Sonar rules separately (section 8).
+- Restore only when needed: first run, `obj/project.assets.json` missing, or a project file or
+  a global props/package file is newer than the last successful restore.
+- M0 measures how much a single-project incremental build costs on real solutions, with and
+  without analyzers ([M0-measurement.md](M0-measurement.md)).
+
+### 6.2 Test runner modes
+
+`dotnet test` behaves differently depending on the runner. The extension detects the mode per
+solution and builds filters accordingly.
+
+| Mode | How it is selected | Filter mechanism |
+|---|---|---|
+| **VSTest** (default) | No `global.json` test runner entry | `--filter "<expression>"` (VSTest filter syntax) |
+| **VSTest bridge** | `<TestingPlatformDotnetTestSupport>true` in VSTest mode | `--filter` is forwarded by the bridge; to be verified per framework in M3 |
+| **Microsoft.Testing.Platform** (.NET 10 SDK+) | `global.json`: `"test": { "runner": "Microsoft.Testing.Platform" }` | Framework-specific options. `dotnet test --solution` / `--project` is required. |
+
+In MTP mode **xUnit v3 rejects `--filter`** (verified with xUnit v3 3.1 on the .NET 10 SDK:
+exit code 5, "Unknown option '--filter'"). xUnit v3 offers `--filter-class`,
+`--filter-method`, `--filter-namespace`, `--filter-trait`, `--filter-uid`, the
+`--filter-not-*` variants and `--filter-query`. Exact selection therefore uses repeated
+`--filter-method Ns.Class.Method` options, which have the same length limits as 6.4. MSTest
+on MTP accepts a VSTest-style `--filter`; NUnit's MTP runner is verified in M3.
+
+### 6.3 Filters (VSTest mode)
+
+- Exact selection: `FullyQualifiedName=Ns.Class.Method` terms joined with `|`.
+- **xUnit**: `FullyQualifiedName` is `Ns.Class.Method` for every row of a `[Theory]` (the
+  data appears only in the display name), so the exact term selects all rows. Nested classes
+  appear as `Outer+Inner`.
+- **NUnit**: the NUnit adapter puts the arguments of parameterized tests into the fully
+  qualified name, for example `Ns.Class.Method(1,2)` for `[TestCase(1, 2)]`. An exact
+  `FullyQualifiedName=Ns.Class.Method` misses them. For NUnit test methods with parameters,
+  add a prefix term: `FullyQualifiedName~Ns.Class.Method\(` (the `(` must be escaped with `\`
+  in VSTest filter syntax, like `)`, `&`, `|`, `=`, `!` and `~`).
+- **MSTest**: data rows share `Ns.Class.Method`, like xUnit.
+- Display names are never used for selection.
+- Extra user filter (`aftershock.testFilter`, for example `Category!=Integration`) is combined
+  as `(<selection>)&(<user filter>)`.
+
+### 6.4 Command-line length
+
+- If the filter is longer than 8000 characters (setting), reduce it to class level
+  (`FullyQualifiedName~Ns.Class.`). If it is still too long, split the tests into batches and
+  run `dotnet test` once per batch. The Windows command-line limit is about 32K characters.
+- To evaluate in M3: passing the filter through a generated `.runsettings` file instead of the
+  command line.
+
+### 6.5 Results
+
+- `dotnet test <test.csproj> --no-build --logger trx --results-directory <tmp> --filter "<filter>"`
+  in VSTest mode. In MTP mode, TRX comes from `--report-trx` (needs the TRX extension) or
+  `--report-xunit-trx` (xUnit v3); console parsing is the fallback.
+- TRX results feed the Problems panel (section 9).
+- Tests that failed in the previous run are added to the next run even if not selected, until
+  they pass.
+
+## 7. New-code coverage
+
+### 7.1 What is "new code"
+
+- Target branch: `aftershock.targetBranch`; if empty, `origin/HEAD`, then `origin/main`,
+  `origin/master`, `origin/develop`.
+- `git merge-base HEAD <target>` gives the base commit. `git diff -U0 --no-color <merge-base>`
+  gives added and modified lines in the working tree. Untracked files count as entirely new.
+- Excluded: test projects, files matching `aftershock.coverageExclusions`, and the server's
+  `sonar.coverage.exclusions` / `sonar.exclusions` (section 8.1).
+
+### 7.2 Collecting coverage
+
+- Default: coverlet collector, `--collect "XPlat Code Coverage"`, Cobertura output.
+- Alternative: Microsoft Code Coverage, `--collect "Code Coverage;Format=cobertura"`. In MTP
+  mode: `Microsoft.Testing.Extensions.CodeCoverage` with
+  `--coverage --coverage-output-format cobertura`.
+- Tools count branches differently, so the tool must match the one in the team's Sonar
+  pipeline (`aftershock.coverageTool`). The M0 script reports which collector the pipeline
+  uses.
+
+### 7.3 Formula
+
+Sonar's coverage formula, restricted to new lines:
+
+```
+Coverage = (CT + CF + LC) / (2*B + EL)
+```
+
+| Symbol | Meaning | From Cobertura |
+|---|---|---|
+| `EL` | coverable new lines | new lines that appear as `<line>` |
+| `LC` | covered new lines | those with `hits > 0` |
+| `2*B` | conditions on new lines | denominator of `condition-coverage="50% (1/2)"` |
+| `CT + CF` | covered conditions | numerator of `condition-coverage` |
+
+**Distance to the gate** (threshold `t` as a fraction, for example 0.85):
+
+```
+needed = ceil(t * (2*B + EL)) - (CT + CF + LC)
+```
+
+Computed with decimal arithmetic to avoid floating-point surprises. Example: `EL = 40`,
+`LC = 30`, `2*B = 10`, `CT + CF = 6`: coverage = 36 / 50 = 72%. For an 85% gate,
+`ceil(0.85 * 50) - 36 = 43 - 36 = 7` more lines or conditions must be covered.
+
+The formula, the Cobertura parsing and the diff mapping get unit tests in M4.
+
+### 7.4 Keeping partial runs consistent
+
+Each run executes only the selected tests, so coverage is stored **per file** and merged:
+
+- Saving a file invalidates its stored coverage.
+- With coverage enabled, impact analysis on save covers **all members of the saved file that
+  are new relative to the target branch**, not only the members changed since the last save.
+  The file's new-code coverage is therefore recomputed completely in every run.
+- Files that were not part of a run keep their last coverage until they change.
+- Calculations always use the saved content on disk, never unsaved editor buffers.
+
+## 8. Sonar integration
+
+Aftershock uses Sonar data only descriptively: it reads the team's own SonarQube server
+configuration and runs SonarSource's analyzer locally. Aftershock is **not affiliated with
+SonarSource**. SonarQube and SonarScanner are trademarks of SonarSource SA.
+
+### 8.1 Server connection
+
+- Server URL: `aftershock.sonar.serverUrl`. Empty means all Sonar features are off.
+- Token: stored in VS Code `SecretStorage` via `Aftershock: Set Sonar Token`. Never written to
+  settings files or logs. Requests use `Authorization: Bearer <token>`.
+- Project key: `aftershock.sonar.projectKey`; otherwise found in `.github/workflows/*.yml`,
+  Azure Pipelines YAML (`projectKey` input), then `sonar-project.properties`.
+- Web API calls (all verified against a real server at the start of M5a; fields differ
+  between server versions):
+
+| Purpose | Endpoint |
+|---|---|
+| Server version (logged) | `api/server/version` |
+| Quality gate of the project | `api/qualitygates/get_by_project?project=KEY` |
+| Gate conditions (`new_coverage` threshold, other new-code conditions) | `api/qualitygates/show` |
+| Exclusions | `api/settings/values?component=KEY&keys=sonar.coverage.exclusions,sonar.exclusions` |
+| C# quality profile | `api/qualityprofiles/search?project=KEY&language=cs` |
+| Active rules with parameters and severities (paged) | `api/rules/search?qprofile=...&activation=true&languages=cs&f=params,severity,...` |
+| Installed C# plugin version | `api/plugins/installed` |
+
+- The `new_coverage` threshold replaces `aftershock.coverageThreshold`. Other new-code gate
+  conditions (issue counts and so on) are shown as targets in the status bar tooltip.
+- Server exclusions are merged with `aftershock.coverageExclusions`.
+- Everything is cached (`aftershock.sonar.cacheMinutes`, default 60). If the server cannot be
+  reached, the last cache is used, then local settings. The output channel says which.
+
+### 8.2 Analyzer acquisition
+
+Preferred: **the same mechanism SonarScanner for .NET uses in its `begin` step**, because that
+guarantees the analyzer version matches the server's C# plugin. M5b starts by documenting
+exactly how the scanner obtains the analyzer and rule configuration from the server, and
+whether a client can reuse it with a user token. The working assumption to verify: the C#
+plugin publishes the analyzer as a static resource described by `sonaranalyzer-cs.*` server
+properties, and the scanner downloads it from the server.
+
+Fallback: read the C# plugin version from `api/plugins/installed`, download the matching
+`SonarAnalyzer.CSharp` package from the configured NuGet sources, and cache it under the user
+profile (versioned folder).
+
+Either way:
+
+- Analyzer DLLs load into a separate `AssemblyLoadContext`.
+- Before use, check that the `Microsoft.CodeAnalysis` version the analyzer was built against
+  is compatible with the analyzer process's Roslyn. If not, show a clear error and disable
+  local rules (impact analysis keeps working).
+- **Licensing**: recent `SonarAnalyzer.CSharp` versions are licensed under the SONAR
+  Source-Available License v1.0; older versions were LGPL-3.0. Aftershock **does not bundle
+  or redistribute** the analyzer. It is downloaded at runtime from the user's own server or
+  NuGet feed. Users are responsible for using it in line with that license and their
+  organization's policies.
+
+### 8.3 Rule configuration
+
+- Rules active in the quality profile are enabled, all others disabled, through the
+  diagnostic options passed to `CompilationWithAnalyzers` (or a generated `.globalconfig`).
+  `csharpsquid:S1234` maps to diagnostic ID `S1234`.
+- Rule parameters (for example S107 `max`) are written in the `SonarLint.xml` format the
+  analyzer expects and passed as an `AdditionalText`.
+- Generated code is not analyzed (`sonar.cs.analyzeGeneratedCode=false`).
+- Test projects are marked as test code, as the scanner does, so test-specific rule behavior
+  matches the server.
+- The rule set is cached with the gate thresholds and refreshed on the same schedule.
+
+### 8.4 Running rules
+
+- Only the saved document is analyzed: syntax and semantic analyzer diagnostics for that
+  document (`CompilationWithAnalyzers.GetAnalyzerSyntaxDiagnosticsAsync(tree, ...)`,
+  `GetAnalyzerSemanticDiagnosticsAsync(semanticModel, span, ...)`), on the warm workspace.
+- Runs in parallel with build and test and does not wait for them. A new save cancels the
+  previous analysis.
+- Time per file is logged. Timeout 15 s per file (some rules are expensive).
+- Optional (`aftershock.sonar.analyzeOnType`, default off): also analyze while typing, with
+  debounce, on the unsaved buffer.
+
+### 8.5 Showing issues
+
+- VS Code diagnostics with source `Aftershock (Sonar rules)`. Severity mapped from the server
+  (blocker/critical -> Error, major -> Warning, minor -> Information, info -> Hint; for
+  servers using the software-quality impact model, high/medium/low map to
+  Error/Warning/Information).
+- Each diagnostic carries the rule ID and a link to the rule page:
+  `<serverUrl>/coding_rules?open=csharpsquid:S1234`.
+- By default only issues on **new lines** are shown (`aftershock.sonar.showAllIssues` shows
+  all).
+- The status bar summary includes the issue count, for example `New code: 87% cov · 3 issues`.
+  Clicking lists the issues in a Quick Pick and jumps to the selected one.
+- The count covers files analyzed in this session. `Aftershock: Analyze All Files in New Code`
+  analyzes every file in the diff once, in the background.
+
+### 8.6 Limits (also in the README)
+
+- Edition-specific rules and taint (security data-flow) analysis do not run locally. Results
+  are very close to the server's but may not be identical; the pull request analysis is
+  definitive.
+- Issues marked "won't fix" or "false positive" on the server still show locally. Low-priority
+  improvement: fetch them with `api/issues/search` and hide matches by rule, file and line
+  content.
+- Optional, low priority: list open issues from the branch's or pull request's last server
+  analysis (`api/issues/search` with the new-code filter) in a separate view. That reflects the
+  last push, not the current state.
+
+## 9. User interface
+
+- **Status bar**: `Analyzing…`, `Building…`, `Testing (12)…`,
+  `✓ 12/12 · New code 87% (gate 85%)`, `✗ 2 failed`. Warning color when coverage is below the
+  gate. Click opens the output channel. Tooltip shows fallback reasons and gate targets.
+- **Output channel**: duration of each step, selected tests with reason chains, fallback
+  reasons, analyzer and server messages.
+- **Problems panel**: failed tests as diagnostics on the test method's declaration line (from
+  TRX): message plus the first lines of the stack trace.
+- **Editor decorations**: uncovered new lines red, partially covered new lines (some conditions
+  missed) yellow, as gutter marks plus a light background. Can be turned off.
+- **Commands**:
+  - `Aftershock: Run All Tests`
+  - `Aftershock: Show Impacted Tests (Why?)`: selected tests with reason chains
+  - `Aftershock: Recompute New-Code Coverage`
+  - `Aftershock: Pause / Resume`
+  - `Aftershock: Set Sonar Token`
+  - `Aftershock: Analyze All Files in New Code`
+- Later: Test Explorer integration through the VS Code Testing API (`TestController`).
+- Localization: English UI strings with a Turkish translation (`vscode.l10n`,
+  `package.nls.tr.json`).
+
+## 10. Settings
+
+| Setting | Default | Description |
+|---|---|---|
+| `aftershock.solution` | auto (first `.sln`/`.slnx` in the workspace root) | Solution to analyze |
+| `aftershock.targetBranch` | auto | Comparison branch for new code |
+| `aftershock.coverageThreshold` | 85 | New-code coverage target (%) when the server value is not available |
+| `aftershock.coverageEnabled` | true | Collect coverage |
+| `aftershock.coverageTool` | `coverlet` | `coverlet` or `microsoft` |
+| `aftershock.coverageExclusions` | `[]` | Glob list; keep in sync with the project's `sonar.coverage.exclusions` |
+| `aftershock.fallbackGlobs` | `["**/appsettings*.json"]` | Files that trigger a full test-project run when changed |
+| `aftershock.testFilter` | `""` | Extra filter added to every run (for example `Category!=Integration`) |
+| `aftershock.debounceMs` | 1500 | Wait after a save |
+| `aftershock.maxImpactedSymbols` | 500 | BFS limit |
+| `aftershock.disableAnalyzersInBuild` | true | Turn off Roslyn analyzers in Aftershock's builds |
+| `aftershock.decorations` | true | Coverage decorations in the editor |
+| `aftershock.sonar.serverUrl` | `""` | SonarQube server; empty disables Sonar features |
+| `aftershock.sonar.projectKey` | auto | Found as described in 8.1 when empty |
+| `aftershock.sonar.showAllIssues` | false | false: only issues on new code; true: all issues in the file |
+| `aftershock.sonar.analyzeOnType` | false | Also analyze while typing |
+| `aftershock.sonar.cacheMinutes` | 60 | Cache time for rules and gate thresholds |
+
+## 11. Security and privacy
+
+- No telemetry.
+- Network traffic goes only to the SonarQube server the user configures and to NuGet feeds
+  (analyzer download). Nothing else.
+- Tokens stay in SecretStorage and are never logged.
+- Logs and the output channel avoid printing tokens and full request headers.
+
+## 12. Milestones
+
+Each milestone ends in a working state and is verified before the next one starts.
+
+| | Milestone | Done when |
+|---|---|---|
+| **M0** | Measurement | `scripts/measure-build.ps1` run on a real large solution: restore, full build, `dotnet test --no-build`, and the largest test project's incremental build measured separately. We know how much of the loop is build vs tests. If build dominates, M3 focuses on build optimization. |
+| **M1** | Analyzer CLI | `impact` command: changed members relative to a git ref, impacted tests with reason chains as JSON. Fixture solution under `/samples` plus analyzer tests for: direct call and multi-level chains; calls through interfaces; abstract/virtual overrides; property getter/setter; test class constructor and setup methods (whole class selected); xUnit `[Theory]`, NUnit `[TestCase]`, MSTest `[DataTestMethod]`; a change that reaches no test; fallback triggers (csproj, appsettings, DI registration). Accepted when, for several changes in a real repository, results match tests found by hand with "Find All References". |
+| **M2** | Server mode | Warm workspace, document updates, caching. Analysis time per typical change logged. |
+| **M3** | Extension core loop | Save -> analyze -> build -> filtered test run -> status bar, output channel, Problems panel. Includes cancellation, debug-session check and test runner mode detection (6.2). |
+| **M4** | New-code coverage | Git diff, Cobertura parsing, Sonar formula, per-file merge, decorations, "how many more to the gate". Unit tests for the formula. |
+| **M5a** | Sonar connection | APIs verified on a real server first (version, gate conditions, exclusions, quality profile, active rules). Then token handling, project key discovery, cached thresholds and exclusions. |
+| **M5b** | Local rules | Document how SonarScanner for .NET acquires the analyzer; acquire it, configure it from the quality profile, analyze the saved file, show diagnostics and the status bar summary. Accepted when the code smells reported by the server's last pull request analysis also appear locally in the same files (except edition-specific rules). |
+| **M6** | Polish | "Why?" command, Test Explorer integration, settings review, README, Marketplace packaging. |
+
+## 13. Open questions
+
+These are answered by the M0 report and by the first M5a session against a real server:
+
+- Which xUnit flavor and runner mode do the target solutions use (xUnit v2 with VSTest, or
+  xUnit v3, possibly on Microsoft.Testing.Platform)? NUnit or MSTest anywhere?
+- Which tool collects coverage in the Sonar pipeline (coverlet, Microsoft Code Coverage,
+  other), and in which format?
+- Server version and edition (Community, Developer, Enterprise). Can users create their own
+  tokens?
+- Is using `SonarAnalyzer.CSharp` (source-available license) in a local developer tool in line
+  with the organization's policy?

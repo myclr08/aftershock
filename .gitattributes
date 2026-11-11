@@ -1,0 +1,49 @@
+# Normalize line endings: text files are stored with LF in the repository.
+* text=auto eol=lf
+
+# Windows-only scripts keep CRLF in the working tree.
+# (Windows PowerShell 5.1 is happy with LF too, but CRLF avoids surprises in
+#  editors and in signed-script scenarios.)
+*.ps1   text eol=crlf
+*.psm1  text eol=crlf
+*.psd1  text eol=crlf
+*.cmd   text eol=crlf
+*.bat   text eol=crlf
+
+# Unix scripts must stay LF.
+*.sh    text eol=lf
+
+# .NET
+*.cs      text diff=csharp
+*.csproj  text
+*.props   text
+*.targets text
+*.sln     text eol=crlf
+*.slnx    text
+*.json    text
+*.xml     text
+*.config  text
+*.editorconfig text
+
+# TypeScript / web
+*.ts    text
+*.js    text
+*.mjs   text
+*.md    text diff=markdown
+*.yml   text
+*.yaml  text
+
+# Binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.svg   text
+*.dll   binary
+*.exe   binary
+*.nupkg binary
+*.snk   binary
+*.vsix  binary
+*.woff  binary
+*.woff2 binary

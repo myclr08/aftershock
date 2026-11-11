@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_NOLOGO: "1"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "1"
+
+jobs:
+  analyzer:
+    name: Analyzer (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      - name: Test
+        run: >
+          dotnet test analyzer/Aftershock.Analyzer.sln -c Release
+          --logger trx --results-directory TestResults
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.os }}
+          path: TestResults/**/*.trx
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # Extension job, enabled once /extension exists (M3):
+  #
+  # extension:
+  #   name: Extension (${{ matrix.os }})
+  #   runs-on: ${{ matrix.os }}
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       os: [ubuntu-latest, windows-latest]
+  #   defaults:
+  #     run:
+  #       working-directory: extension
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: actions/setup-node@v4
+  #       with:
+  #         node-version: 22
+  #         cache: npm
+  #         cache-dependency-path: extension/package-lock.json
+  #     - run: npm ci
+  #     - run: npm run lint
+  #     - run: npm run compile
+  #     - run: xvfb-run -a npm test
+  #       if: runner.os == 'Linux'
+  #     - run: npm test
+  #       if: runner.os != 'Linux'
