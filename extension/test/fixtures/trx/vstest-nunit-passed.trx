@@ -1,0 +1,75 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="56acd444-9957-4083-86a0-463f5aafdc8b" name="@build-host 2026-11-12 04:12:01" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-11-12T04:12:01.2783329+03:00" queuing="2026-11-12T04:12:01.2783329+03:00" start="2026-11-12T04:12:00.9520661+03:00" finish="2026-11-12T04:12:01.2815754+03:00" />
+  <TestSettings name="default" id="7f273fbc-40eb-4293-9e0a-7ab65d58d459">
+    <Deployment runDeploymentRoot="_build-host_2026-11-12_04_12_01" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="718271df-7fe0-4dad-9546-44e95964e1a9" testId="1967bf68-6c85-b9ee-3221-553e27ee238d" testName="Describe_IncludesPoints" computerName="build-host" duration="00:00:00.0018050" startTime="2026-11-12T04:12:01.2038549+03:00" endTime="2026-11-12T04:12:01.2056374+03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="718271df-7fe0-4dad-9546-44e95964e1a9" />
+    <UnitTestResult executionId="32c0a309-190d-41b4-9962-584b9a1c146e" testId="6e6a9df8-0165-9f3a-01d9-a70e56a12590" testName="Quote_Standard" computerName="build-host" duration="00:00:00.0001670" startTime="2026-11-12T04:12:01.2103580+03:00" endTime="2026-11-12T04:12:01.2105251+03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="32c0a309-190d-41b4-9962-584b9a1c146e" />
+    <UnitTestResult executionId="7732b578-833d-45c8-8dee-59737145fa67" testId="404f5433-7ea5-178c-b48b-bc6326d7a52d" testName="Quote_Express" computerName="build-host" duration="00:00:00.0002100" startTime="2026-11-12T04:12:01.2098841+03:00" endTime="2026-11-12T04:12:01.2100943+03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="7732b578-833d-45c8-8dee-59737145fa67" />
+    <UnitTestResult executionId="639e3b3f-c2f3-469b-890d-1c9df7586e96" testId="d63d3374-5380-daf7-a7ad-e0ae66f660cf" testName="Quote_Express_ByQuantity(3,16.99d)" computerName="build-host" duration="00:00:00.0001270" startTime="2026-11-12T04:12:01.2102174+03:00" endTime="2026-11-12T04:12:01.2103440+03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="639e3b3f-c2f3-469b-890d-1c9df7586e96" />
+    <UnitTestResult executionId="f5f25bcf-435c-4026-987c-df66e9353618" testId="00dbb350-cf1d-920e-68fd-3d70d331959f" testName="Eta_Express_IsOneDay" computerName="build-host" duration="00:00:00.0009630" startTime="2026-11-12T04:12:01.2089130+03:00" endTime="2026-11-12T04:12:01.2098763+03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="f5f25bcf-435c-4026-987c-df66e9353618" />
+    <UnitTestResult executionId="9fe712eb-5667-42d5-bc9a-31ea1a35fe8f" testId="d84a7afc-f77b-baf5-3fa4-bfe03675a3f9" testName="Cost_ByQuantity(2,15.99d)" computerName="build-host" duration="00:00:00.0001499" startTime="2026-11-12T04:12:01.2086331+03:00" endTime="2026-11-12T04:12:01.2087834+03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="9fe712eb-5667-42d5-bc9a-31ea1a35fe8f" />
+    <UnitTestResult executionId="3979908e-c5c2-41d0-a288-c9a083e3c012" testId="31e2f4c0-3957-6958-280b-40409efab669" testName="Cost_ByQuantity(1,14.99d)" computerName="build-host" duration="00:00:00.0014630" startTime="2026-11-12T04:12:01.2071613+03:00" endTime="2026-11-12T04:12:01.2086238+03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="3979908e-c5c2-41d0-a288-c9a083e3c012" />
+    <UnitTestResult executionId="eccfaa8f-4a20-4741-ade0-afcab5271b77" testId="ebc154cd-0d39-f53c-7f57-8780b25f1a0e" testName="Quote_Express_ByQuantity(1,14.99d)" computerName="build-host" duration="00:00:00.0000989" startTime="2026-11-12T04:12:01.2101147+03:00" endTime="2026-11-12T04:12:01.2102137+03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="eccfaa8f-4a20-4741-ade0-afcab5271b77" />
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="Quote_Standard" storage="/work/impactsample/tests/sample.tests.nunit/bin/debug/net8.0/sample.tests.nunit.dll" id="6e6a9df8-0165-9f3a-01d9-a70e56a12590">
+      <Execution id="32c0a309-190d-41b4-9962-584b9a1c146e" />
+      <TestMethod codeBase="/work/impactsample/tests/Sample.Tests.NUnit/bin/Debug/net8.0/Sample.Tests.NUnit.dll" adapterTypeName="executor://nunit3testexecutor/" className="Sample.Tests.NUnit.ShippingQuoteServiceTests" name="Quote_Standard" />
+    </UnitTest>
+    <UnitTest name="Cost_ByQuantity(1,14.99d)" storage="/work/impactsample/tests/sample.tests.nunit/bin/debug/net8.0/sample.tests.nunit.dll" id="31e2f4c0-3957-6958-280b-40409efab669">
+      <Execution id="3979908e-c5c2-41d0-a288-c9a083e3c012" />
+      <TestMethod codeBase="/work/impactsample/tests/Sample.Tests.NUnit/bin/Debug/net8.0/Sample.Tests.NUnit.dll" adapterTypeName="executor://nunit3testexecutor/" className="Sample.Tests.NUnit.ExpressCostCaseTests" name="Cost_ByQuantity(1,14.99d)" />
+    </UnitTest>
+    <UnitTest name="Quote_Express_ByQuantity(3,16.99d)" storage="/work/impactsample/tests/sample.tests.nunit/bin/debug/net8.0/sample.tests.nunit.dll" id="d63d3374-5380-daf7-a7ad-e0ae66f660cf">
+      <Execution id="639e3b3f-c2f3-469b-890d-1c9df7586e96" />
+      <TestMethod codeBase="/work/impactsample/tests/Sample.Tests.NUnit/bin/Debug/net8.0/Sample.Tests.NUnit.dll" adapterTypeName="executor://nunit3testexecutor/" className="Sample.Tests.NUnit.ShippingQuoteServiceTests" name="Quote_Express_ByQuantity(3,16.99d)" />
+    </UnitTest>
+    <UnitTest name="Quote_Express_ByQuantity(1,14.99d)" storage="/work/impactsample/tests/sample.tests.nunit/bin/debug/net8.0/sample.tests.nunit.dll" id="ebc154cd-0d39-f53c-7f57-8780b25f1a0e">
+      <Execution id="eccfaa8f-4a20-4741-ade0-afcab5271b77" />
+      <TestMethod codeBase="/work/impactsample/tests/Sample.Tests.NUnit/bin/Debug/net8.0/Sample.Tests.NUnit.dll" adapterTypeName="executor://nunit3testexecutor/" className="Sample.Tests.NUnit.ShippingQuoteServiceTests" name="Quote_Express_ByQuantity(1,14.99d)" />
+    </UnitTest>
+    <UnitTest name="Cost_ByQuantity(2,15.99d)" storage="/work/impactsample/tests/sample.tests.nunit/bin/debug/net8.0/sample.tests.nunit.dll" id="d84a7afc-f77b-baf5-3fa4-bfe03675a3f9">
+      <Execution id="9fe712eb-5667-42d5-bc9a-31ea1a35fe8f" />
+      <TestMethod codeBase="/work/impactsample/tests/Sample.Tests.NUnit/bin/Debug/net8.0/Sample.Tests.NUnit.dll" adapterTypeName="executor://nunit3testexecutor/" className="Sample.Tests.NUnit.ExpressCostCaseTests" name="Cost_ByQuantity(2,15.99d)" />
+    </UnitTest>
+    <UnitTest name="Quote_Express" storage="/work/impactsample/tests/sample.tests.nunit/bin/debug/net8.0/sample.tests.nunit.dll" id="404f5433-7ea5-178c-b48b-bc6326d7a52d">
+      <Execution id="7732b578-833d-45c8-8dee-59737145fa67" />
+      <TestMethod codeBase="/work/impactsample/tests/Sample.Tests.NUnit/bin/Debug/net8.0/Sample.Tests.NUnit.dll" adapterTypeName="executor://nunit3testexecutor/" className="Sample.Tests.NUnit.ShippingQuoteServiceTests" name="Quote_Express" />
+    </UnitTest>
+    <UnitTest name="Eta_Express_IsOneDay" storage="/work/impactsample/tests/sample.tests.nunit/bin/debug/net8.0/sample.tests.nunit.dll" id="00dbb350-cf1d-920e-68fd-3d70d331959f">
+      <Execution id="f5f25bcf-435c-4026-987c-df66e9353618" />
+      <TestMethod codeBase="/work/impactsample/tests/Sample.Tests.NUnit/bin/Debug/net8.0/Sample.Tests.NUnit.dll" adapterTypeName="executor://nunit3testexecutor/" className="Sample.Tests.NUnit.ShippingQuoteServiceTests" name="Eta_Express_IsOneDay" />
+    </UnitTest>
+    <UnitTest name="Describe_IncludesPoints" storage="/work/impactsample/tests/sample.tests.nunit/bin/debug/net8.0/sample.tests.nunit.dll" id="1967bf68-6c85-b9ee-3221-553e27ee238d">
+      <Execution id="718271df-7fe0-4dad-9546-44e95964e1a9" />
+      <TestMethod codeBase="/work/impactsample/tests/Sample.Tests.NUnit/bin/Debug/net8.0/Sample.Tests.NUnit.dll" adapterTypeName="executor://nunit3testexecutor/" className="Sample.Tests.NUnit.CustomerFormatterTests" name="Describe_IncludesPoints" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="1967bf68-6c85-b9ee-3221-553e27ee238d" executionId="718271df-7fe0-4dad-9546-44e95964e1a9" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="6e6a9df8-0165-9f3a-01d9-a70e56a12590" executionId="32c0a309-190d-41b4-9962-584b9a1c146e" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="404f5433-7ea5-178c-b48b-bc6326d7a52d" executionId="7732b578-833d-45c8-8dee-59737145fa67" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="d63d3374-5380-daf7-a7ad-e0ae66f660cf" executionId="639e3b3f-c2f3-469b-890d-1c9df7586e96" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="00dbb350-cf1d-920e-68fd-3d70d331959f" executionId="f5f25bcf-435c-4026-987c-df66e9353618" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="d84a7afc-f77b-baf5-3fa4-bfe03675a3f9" executionId="9fe712eb-5667-42d5-bc9a-31ea1a35fe8f" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="31e2f4c0-3957-6958-280b-40409efab669" executionId="3979908e-c5c2-41d0-a288-c9a083e3c012" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="ebc154cd-0d39-f53c-7f57-8780b25f1a0e" executionId="eccfaa8f-4a20-4741-ade0-afcab5271b77" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Completed">
+    <Counters total="8" executed="8" passed="8" failed="0" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>NUnit Adapter 5.0.0.0: Test execution started
+Running all tests in /work/impactsample/tests/Sample.Tests.NUnit/bin/Debug/net8.0/Sample.Tests.NUnit.dll
+   NUnit3TestExecutor discovered 8 of 8 NUnit test cases using Current Discovery mode, Non-Explicit run
+NUnit Adapter 5.0.0.0: Test execution complete
+</StdOut>
+    </Output>
+  </ResultSummary>
+</TestRun>

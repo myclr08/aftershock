@@ -1,0 +1,17 @@
+{
+  "extension.description": "Runs only the .NET test methods your change can reach: on save, a Roslyn analyzer finds the impacted tests, and only their test projects are built and run.",
+  "untrustedWorkspaces.description": "Aftershock builds and runs the workspace's code, which needs a trusted workspace.",
+  "virtualWorkspaces.description": "Aftershock runs dotnet on the local file system.",
+  "command.runAllTests": "Run All Tests",
+  "command.showImpactedTests": "Show Impacted Tests (Why?)",
+  "command.togglePause": "Pause / Resume",
+  "command.restartAnalyzer": "Restart Analyzer",
+  "command.showOutput": "Show Output",
+  "config.solution": "Solution (`.sln` or `.slnx`) to analyze, absolute or relative to the workspace folder. Empty: the first solution in the workspace root (by name), else the shallowest one below it.",
+  "config.debounceMs": "Time to wait after a save before analyzing (milliseconds). Further saves in this time are analyzed together.",
+  "config.maxImpactedSymbols": "Limit of the caller search per changed file (non-test symbols). Above it, the dependent test projects run completely. `0` means no limit.",
+  "config.fallbackGlobs": "Files whose change runs the dependent test projects completely (relative to the repository or solution folder; a pattern without `/` matches the file name anywhere). Setting a value replaces the default.",
+  "config.testFilter": "Extra VSTest filter for every run, for example `Category!=Integration`. Combined with the selection as `(<selection>)&(<filter>)`. For xUnit v3 on Microsoft.Testing.Platform, simple `Trait=Value` / `Trait!=Value` terms are translated.",
+  "config.disableAnalyzersInBuild": "Turn off Roslyn analyzers in Aftershock's builds (`-p:RunAnalyzers=false`) for faster feedback. Your normal builds and CI are not affected.",
+  "config.dotnetPath": "The `dotnet` executable used to run the analyzer, builds and tests."
+}

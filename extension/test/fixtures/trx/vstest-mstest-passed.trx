@@ -1,0 +1,38 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="c7c8735d-3cd4-4914-bb4e-9197bf916bc2" name="@build-host 2026-11-12 04:12:01" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-11-12T04:12:01.9790465+03:00" queuing="2026-11-12T04:12:01.9790465+03:00" start="2026-11-12T04:12:01.6609940+03:00" finish="2026-11-12T04:12:01.9825631+03:00" />
+  <TestSettings name="default" id="1fdab1e1-2358-421c-8a5d-b851efb37268">
+    <Deployment runDeploymentRoot="_build-host_2026-11-12_04_12_01" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="895e705a-49f6-423e-8e9a-85546b8026d6" testId="9c670f44-ff2a-f161-8e1f-4e52ad56c071" testName="CanRedeem_RespectsThreshold (99,False)" computerName="build-host" duration="00:00:00.0050524" startTime="2026-11-12T04:12:01.8868672+03:00" endTime="2026-11-12T04:12:01.9025313+03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="895e705a-49f6-423e-8e9a-85546b8026d6" />
+    <UnitTestResult executionId="cbe23a96-1f63-4af5-a4b6-b793db1e2f84" testId="2fb3216b-4b34-c040-830a-abee54afd41a" testName="CanRedeem_RespectsThreshold (100,True)" computerName="build-host" duration="00:00:00.0002174" startTime="2026-11-12T04:12:01.9048052+03:00" endTime="2026-11-12T04:12:01.9052161+03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="cbe23a96-1f63-4af5-a4b6-b793db1e2f84" />
+    <UnitTestResult executionId="ccc3269c-7838-4151-9f42-3977d0260a66" testId="4189763b-451d-4221-2676-1c205392daba" testName="Reset_ClearsPoints" computerName="build-host" duration="00:00:00.0001736" startTime="2026-11-12T04:12:01.9053538+03:00" endTime="2026-11-12T04:12:01.9070098+03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="ccc3269c-7838-4151-9f42-3977d0260a66" />
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="CanRedeem_RespectsThreshold (100,True)" storage="/work/impactsample/tests/sample.tests.mstest/bin/debug/net8.0/sample.tests.mstest.dll" id="2fb3216b-4b34-c040-830a-abee54afd41a">
+      <Execution id="cbe23a96-1f63-4af5-a4b6-b793db1e2f84" />
+      <TestMethod codeBase="/work/impactsample/tests/Sample.Tests.MSTest/bin/Debug/net8.0/Sample.Tests.MSTest.dll" adapterTypeName="executor://mstestadapter/v2" className="Sample.Tests.MSTest.LoyaltyServiceTests" name="CanRedeem_RespectsThreshold" />
+    </UnitTest>
+    <UnitTest name="CanRedeem_RespectsThreshold (99,False)" storage="/work/impactsample/tests/sample.tests.mstest/bin/debug/net8.0/sample.tests.mstest.dll" id="9c670f44-ff2a-f161-8e1f-4e52ad56c071">
+      <Execution id="895e705a-49f6-423e-8e9a-85546b8026d6" />
+      <TestMethod codeBase="/work/impactsample/tests/Sample.Tests.MSTest/bin/Debug/net8.0/Sample.Tests.MSTest.dll" adapterTypeName="executor://mstestadapter/v2" className="Sample.Tests.MSTest.LoyaltyServiceTests" name="CanRedeem_RespectsThreshold" />
+    </UnitTest>
+    <UnitTest name="Reset_ClearsPoints" storage="/work/impactsample/tests/sample.tests.mstest/bin/debug/net8.0/sample.tests.mstest.dll" id="4189763b-451d-4221-2676-1c205392daba">
+      <Execution id="ccc3269c-7838-4151-9f42-3977d0260a66" />
+      <TestMethod codeBase="/work/impactsample/tests/Sample.Tests.MSTest/bin/Debug/net8.0/Sample.Tests.MSTest.dll" adapterTypeName="executor://mstestadapter/v2" className="Sample.Tests.MSTest.LoyaltyServiceTests" name="Reset_ClearsPoints" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="9c670f44-ff2a-f161-8e1f-4e52ad56c071" executionId="895e705a-49f6-423e-8e9a-85546b8026d6" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="2fb3216b-4b34-c040-830a-abee54afd41a" executionId="cbe23a96-1f63-4af5-a4b6-b793db1e2f84" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="4189763b-451d-4221-2676-1c205392daba" executionId="ccc3269c-7838-4151-9f42-3977d0260a66" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Completed">
+    <Counters total="3" executed="3" passed="3" failed="0" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+  </ResultSummary>
+</TestRun>

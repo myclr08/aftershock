@@ -1,0 +1,57 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="6ee14cd8-3fe7-487f-ac6d-7bcec1ac4c92" name="@build-host 2026-11-12 01:16:12.6364118" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-11-12T01:16:12.5037659Z" queuing="2026-11-12T01:16:12.5037659Z" start="2026-11-12T01:16:12.5037659Z" finish="2026-11-12T01:16:12.6369809Z" />
+  <TestSettings name="default" id="deba18d5-9a8b-4f08-bc17-7d555954c307">
+    <Deployment runDeploymentRoot="_build-host_2026-11-12_01_16_12.6364118" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="9a815f48-e5eb-4bab-8440-8ef48086cc98" testId="b0c9ddaf-0e23-4d8a-3883-b8bb6db62cb4" testName="Cost_ByQuantity(1,13.99d)" computerName="build-host" duration="00:00:00.0163030" startTime="2026-11-12T01:16:12.6032956+00:00" endTime="2026-11-12T01:16:12.6195753+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Failed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="9a815f48-e5eb-4bab-8440-8ef48086cc98">
+      <Output>
+        <ErrorInfo>
+          <Message>  Assert.That(new ExpressShipping().Cost(TestOrders.WithQuantity(quantity)), Is.EqualTo((decimal)expected))
+  Expected: 13.99m
+  But was:  14.99m
+</Message>
+          <StackTrace>   at Sample.Tests.NUnit.ExpressCostCaseTests.Cost_ByQuantity(Int32 quantity, Double expected) in /work/impactsample/tests/Sample.Tests.NUnit/ExpressCostCaseTests.cs:line 17
+
+1)    at Sample.Tests.NUnit.ExpressCostCaseTests.Cost_ByQuantity(Int32 quantity, Double expected) in /work/impactsample/tests/Sample.Tests.NUnit/ExpressCostCaseTests.cs:line 17
+
+</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="67b22de2-dfdc-4b8a-bece-2e4288359f64" testId="debd0db0-d4d1-9cb2-f085-86b057e85244" testName="Cost_ByQuantity(2,15.99d)" computerName="build-host" duration="00:00:00.0002200" startTime="2026-11-12T01:16:12.6201263+00:00" endTime="2026-11-12T01:16:12.6203466+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="67b22de2-dfdc-4b8a-bece-2e4288359f64" />
+    <UnitTestResult executionId="a653f006-1d18-4e05-9657-ef46fc92accc" testId="e3e09a70-7e25-574d-9914-b1a4a7099b98" testName="Quote_Standard" computerName="build-host" duration="00:00:00.0008230" startTime="2026-11-12T01:16:12.6213992+00:00" endTime="2026-11-12T01:16:12.6222218+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="a653f006-1d18-4e05-9657-ef46fc92accc" />
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="Cost_ByQuantity(1,13.99d)" storage="/work/impactsample/tests/sample.tests.nunit/bin/debug/net8.0/sample.tests.nunit.dll" id="b0c9ddaf-0e23-4d8a-3883-b8bb6db62cb4">
+      <Execution id="9a815f48-e5eb-4bab-8440-8ef48086cc98" />
+      <TestMethod codeBase="/work/impactsample/tests/Sample.Tests.NUnit/bin/Debug/net8.0/Sample.Tests.NUnit.dll" adapterTypeName="executor://NUnitExtension/1.0.0+d6494ae0f5a93e7c23bbe410d3349cda3ceabd59" className="Sample.Tests.NUnit.ExpressCostCaseTests" name="Cost_ByQuantity(1,13.99d)" />
+    </UnitTest>
+    <UnitTest name="Cost_ByQuantity(2,15.99d)" storage="/work/impactsample/tests/sample.tests.nunit/bin/debug/net8.0/sample.tests.nunit.dll" id="debd0db0-d4d1-9cb2-f085-86b057e85244">
+      <Execution id="67b22de2-dfdc-4b8a-bece-2e4288359f64" />
+      <TestMethod codeBase="/work/impactsample/tests/Sample.Tests.NUnit/bin/Debug/net8.0/Sample.Tests.NUnit.dll" adapterTypeName="executor://NUnitExtension/1.0.0+d6494ae0f5a93e7c23bbe410d3349cda3ceabd59" className="Sample.Tests.NUnit.ExpressCostCaseTests" name="Cost_ByQuantity(2,15.99d)" />
+    </UnitTest>
+    <UnitTest name="Quote_Standard" storage="/work/impactsample/tests/sample.tests.nunit/bin/debug/net8.0/sample.tests.nunit.dll" id="e3e09a70-7e25-574d-9914-b1a4a7099b98">
+      <Execution id="a653f006-1d18-4e05-9657-ef46fc92accc" />
+      <TestMethod codeBase="/work/impactsample/tests/Sample.Tests.NUnit/bin/Debug/net8.0/Sample.Tests.NUnit.dll" adapterTypeName="executor://NUnitExtension/1.0.0+d6494ae0f5a93e7c23bbe410d3349cda3ceabd59" className="Sample.Tests.NUnit.ShippingQuoteServiceTests" name="Quote_Standard" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="b0c9ddaf-0e23-4d8a-3883-b8bb6db62cb4" executionId="9a815f48-e5eb-4bab-8440-8ef48086cc98" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="debd0db0-d4d1-9cb2-f085-86b057e85244" executionId="67b22de2-dfdc-4b8a-bece-2e4288359f64" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="e3e09a70-7e25-574d-9914-b1a4a7099b98" executionId="a653f006-1d18-4e05-9657-ef46fc92accc" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Failed">
+    <Counters total="3" executed="3" passed="2" failed="1" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <RunInfos>
+      <RunInfo computerName="build-host" outcome="Error" timestamp="2026-11-12T01:16:12.6439271">
+        <Text>Exit code indicates failure: '2'. Please refer to https://aka.ms/testingplatform/exitcodes for more information.</Text>
+      </RunInfo>
+    </RunInfos>
+  </ResultSummary>
+</TestRun>

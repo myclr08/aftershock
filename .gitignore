@@ -31,6 +31,8 @@ coverage.opencover.xml
 *.coverage
 *.coveragexml
 TestResult.xml
+# ...except the TRX fixtures of the extension's unit tests.
+!extension/test/fixtures/**/*.trx
 lcov.info
 .coverage-report/
 CoverageReport/

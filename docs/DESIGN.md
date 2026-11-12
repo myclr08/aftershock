@@ -117,19 +117,50 @@ Priorities:
 
 ### 4.2 extension (TypeScript)
 
-- Listens to saves of `.cs`, `.csproj`, `.props`, `.targets` and `.json` files and debounces
-  them (`aftershock.debounceMs`, default 1500 ms).
-- Starts, monitors and restarts the analyzer process. Restarts with backoff and reports
-  crashes in the output channel.
+- Listens to saves of `.cs`, `.csproj`, `.props`, `.targets` and `.json` files (and `.sln`/`.slnx`,
+  which make the analyzer reload) and debounces them (`aftershock.debounceMs`, default 1500 ms).
+  Files under `bin/` and `obj/` are ignored.
+- Starts, monitors and restarts the analyzer process (`dotnet aftershock-analyzer.dll serve --solution
+  X`, `aftershock.dotnetPath`). Restarts with backoff (1, 2, 5, 10, 30 s; a process that lived 60 s
+  resets the count; the sixth quick crash in a row ends the retries until `Aftershock: Restart Analyzer`) and
+  reports crashes with the last analyzer stderr lines in the output channel. A load failure
+  (`initialize` fails) is shown and not retried; saving a project file or `Restart Analyzer` starts
+  it again. `log` notifications go to the output channel; stderr only at trace level (it repeats them).
+- The analyzer is published framework-dependent and portable into `extension/dist/analyzer`
+  (`npm run bundle-analyzer`, also run by `vscode:prepublish`) and ships in the VSIX. In a development
+  host the repository's `analyzer/.../bin/{Release,Debug}/net8.0` build is used when there is no
+  bundle; `AFTERSHOCK_ANALYZER_DLL` overrides both.
+- Solution: `aftershock.solution`, else the first `.sln`/`.slnx` in the workspace root (case-insensitive
+  name order, `.sln` before `.slnx`), else the shallowest one up to three folders below it; the output
+  channel says which and why. One solution per window (the first workspace folder that has one).
+- Every successful `impact` result is merged into the **pending work** (per test project: selected
+  tests, or "run everything" with the fallback reasons), also the result of a request that was
+  superseded by a newer save: its snapshot advanced, so its tests would otherwise be lost. A
+  `-32800` answer is not a failure (the analyzer keeps those files pending). Any other analysis
+  failure (crash, `-32603`) runs every test project of the solution, with the reason. Work leaves the
+  pending set only after its tests ran; it is kept in `workspaceState` (per solution) together with
+  the failed tests, so a reload loses nothing. A report that changed nothing relevant (only ignored
+  files, no tests, no fallback) starts no run.
 - Runs `dotnet build` / `dotnet test` as child processes. A new save cancels the running job.
-  Cancellation kills the whole process tree: `taskkill /T /F /PID <pid>` on Windows, process
-  group kill on Unix. MSBuild worker nodes and the compiler server are left alone (they are
-  shared and harmless).
+  Cancellation kills the whole process tree: `taskkill /T /F /PID <pid>` on Windows; on Unix every
+  child is spawned detached (own process group) and the group is killed. MSBuild worker nodes and
+  the compiler server are not killed after a **normal** exit (they are shared and harmless; node reuse
+  is off anyway).
 - If a debug session is active (`vscode.debug.activeDebugSession`), no build or test starts.
-  The status bar shows "waiting for debug session" to avoid file-lock conflicts in `bin/`.
+  The status bar shows "waiting for debug session" to avoid file-lock conflicts in `bin/`. A debug
+  session that starts during a build cancels it; the pending work runs when the last session ends.
+  Saves are still analyzed meanwhile (and while paused), so the selection stays complete.
+- Architecture: the orchestration core (`extension/src/core`: analyzer host and JSON-RPC client,
+  orchestrator, planner, filter builder, restore check, runner-mode detection, TRX parser, process
+  runner, test locator) does not import `vscode` (enforced by ESLint) and is unit-tested in plain
+  Node; `src/extension.ts` and `src/vscode/*` are a thin layer for the status bar, Problems panel,
+  commands and settings. The run pipeline has hooks for M4/M6 (`testArguments` for `--collect`,
+  `afterProject` with the results folders, `afterRun`).
 - All UI strings are English, with a Turkish localization: `package.nls.json` /
   `package.nls.tr.json` for contributions and `vscode.l10n` bundles (`l10n/bundle.l10n.tr.json`)
-  for runtime strings.
+  for runtime strings. The output channel is a technical log and stays English.
+- `engines.vscode` is `^1.85.0` (corporate machines lag behind); the integration test runs on 1.85.2.
+  The Marketplace publisher ID is a placeholder (`aftershock-dev`) until publishing (M6).
 
 ## 5. Impact analysis
 
@@ -345,14 +376,25 @@ Deliberate approximations of M1:
 
 ### 6.1 Build
 
-- Build only the test projects that contain selected tests:
-  `dotnet build <test.csproj> --no-restore -m -p:RunAnalyzers=false -p:TreatWarningsAsErrors=false`
-  (`aftershock.disableAnalyzersInBuild`, default on). CI still runs analyzers; Aftershock runs
-  the Sonar rules separately (section 8).
-- Restore only when needed: first run, `obj/project.assets.json` missing, or a project file or
-  a global props/package file is newer than the last successful restore.
+- Build only the test projects that contain selected tests, one after the other (they share their
+  dependencies; parallel builds would race on the same `obj/` folders):
+  `dotnet build <test.csproj> --no-restore -m -nologo -p:RunAnalyzers=false -p:TreatWarningsAsErrors=false`
+  (`-p:RunAnalyzers=false` only with `aftershock.disableAnalyzersInBuild`, default on). CI still runs
+  analyzers; Aftershock runs the Sonar rules separately (section 8). Compiler errors (de-duplicated)
+  go to the output channel; a failed build keeps its selection pending, and it runs with the next
+  change.
+- Restore only when needed: first run, the project's assets file missing (`ProjectAssetsFile`, default
+  `obj/project.assets.json`), or a file of the project's `ProjectReference` closure, or a
+  `Directory.Build.props/targets`, `Directory.Packages.props`, `global.json` or `nuget.config` in a
+  folder above any of them, newer than the last successful restore (its start time, kept per project
+  in `workspaceState`). A build that fails with `NETSDK1004` (assets file not found) restores and
+  builds once more.
 - M0 measures how much a single-project incremental build costs on real solutions, with and
   without analyzers ([M0-measurement.md](M0-measurement.md)).
+- Measured in M3 (Linux, .NET SDK 10.0.108, `samples/ImpactSample`, TaxRates change reaching 5 xUnit
+  tests): save to result 3.3 s with the default 1.5 s debounce on a warm session (analysis 0.02-0.05 s,
+  build 0.9 s, `dotnet test` 0.8 s); the first save of a session adds the restore check's first
+  restore (0.7 s) and the runner-mode query.
 
 ### 6.1.1 Running `dotnet` child processes
 
@@ -363,59 +405,134 @@ Deliberate approximations of M1:
 - Always set `MSBUILDDISABLENODEREUSE=1` and `DOTNET_CLI_USE_MSBUILD_SERVER=0` in the child's
   environment (or pass `-nodeReuse:false` and `--disable-build-servers`), wait for the **process
   exit**, and then read the remaining output with a bounded wait instead of waiting for EOF.
+  The extension waits at most 2 s for the streams after the exit (the compiler server, started by a
+  build, can hold them for minutes).
 - Cancellation kills the whole process tree (`Process.Kill(entireProcessTree: true)` on .NET;
-  `taskkill /T /F` on Windows from Node).
+  `taskkill /T /F` on Windows from Node; the detached child's process group on Unix). Processes are
+  started without a shell; arguments are passed as an array.
 
 ### 6.2 Test runner modes
 
-`dotnet test` behaves differently depending on the runner. The extension detects the mode per
-solution and builds filters accordingly.
+`dotnet test` behaves differently depending on the runner. The extension detects the mode **per
+test project** (cached until the project's restore inputs change) and builds the arguments
+accordingly:
 
-| Mode | How it is selected | Filter mechanism |
+1. `global.json` (the nearest one above the solution folder, comments allowed) has
+   `"test": { "runner": "Microsoft.Testing.Platform" }` -> **MTP** for every project.
+2. Otherwise `dotnet msbuild <proj> -getProperty:...` (after restore, so package props count) reads
+   `IsTestingPlatformApplication`, `TestingPlatformDotnetTestSupport`, `UseMicrosoftTestingPlatformRunner`,
+   `EnableMSTestRunner`, `EnableNUnitRunner`, `OutputType`, `ProjectAssetsFile`.
+   `IsTestingPlatformApplication` and `TestingPlatformDotnetTestSupport` both true -> **bridge**;
+   anything else -> **VSTest** (an MTP-capable app without `TestingPlatformDotnetTestSupport` runs
+   through its VSTest adapter). `OutputType` alone says nothing: `Microsoft.NET.Test.Sdk` makes every
+   .NET test project an `Exe`. If the query fails, VSTest is assumed and the output channel says so.
+
+| Mode | How it is selected | Command |
 |---|---|---|
-| **VSTest** (default) | No `global.json` test runner entry | `--filter "<expression>"` (VSTest filter syntax) |
-| **VSTest bridge** | `<TestingPlatformDotnetTestSupport>true` in VSTest mode | `--filter` is forwarded by the bridge; to be verified per framework in M3 |
-| **Microsoft.Testing.Platform** (.NET 10 SDK+) | `global.json`: `"test": { "runner": "Microsoft.Testing.Platform" }` | Framework-specific options. `dotnet test --solution` / `--project` is required. |
+| **VSTest** (default) | No `global.json` test runner, no bridge | `dotnet test <proj> --no-build --nologo --logger "trx;LogFileName=<name>.trx" --results-directory <dir> --filter "<expression>"` |
+| **VSTest bridge** | MTP app with `TestingPlatformDotnetTestSupport=true`, VSTest-mode `dotnet test` | `dotnet test <proj> --no-build --nologo -- <app options>` |
+| **Microsoft.Testing.Platform** (.NET 10 SDK+) | `global.json` test runner | `dotnet test --project <proj> --no-build <app options>` |
 
-In MTP mode **xUnit v3 rejects `--filter`** (verified with xUnit v3 3.1 on the .NET 10 SDK:
-exit code 5, "Unknown option '--filter'"). xUnit v3 offers `--filter-class`,
-`--filter-method`, `--filter-namespace`, `--filter-trait`, `--filter-uid`, the
-`--filter-not-*` variants and `--filter-query`. Exact selection therefore uses repeated
-`--filter-method Ns.Class.Method` options, which have the same length limits as 6.4. MSTest
-on MTP accepts a VSTest-style `--filter`; NUnit's MTP runner is verified in M3.
+App options (bridge and MTP): the selection (below), the report (`--report-xunit-trx
+--report-xunit-trx-filename <name>` for xUnit v3, `--report-trx --report-trx-filename <name>` for
+MSTest/NUnit, which needs `Microsoft.Testing.Extensions.TrxReport`), `--results-directory <dir>`.
+
+Verified in M3 with `samples/ImpactSample` switched into each mode in a temporary copy (.NET SDK
+10.0.108, Microsoft.Testing.Platform 1.9):
+
+- **VSTest**: all four sample projects (xUnit v2, xUnit v3 through `xunit.runner.visualstudio`,
+  NUnit3TestAdapter 5.0, MSTest 3.11), including the e2e test and the TRX fixtures.
+- **Bridge**: VSTest options are **ignored for every framework** (`--filter`, `--logger`,
+  `--results-directory`; warning MTP0001 "VSTest-specific properties are set but will be ignored"):
+  an xUnit v3 and an MSTest project ran all tests despite `--filter`. Options after `--` reach the
+  test application, but they are joined into one command line and split again, so a value with
+  spaces or `|` must carry its own double quotes (the argument is `"C:\a b\results"` including the quotes): verified
+  for xUnit v3 (`--filter-method`, `--report-xunit-trx`), MSTest and NUnit 5.2 (`--filter`,
+  `--report-trx`). `-p:TestingPlatformCommandLineArguments=...` works too but needs MSBuild escaping.
+- **MTP**: xUnit v3 with `--filter-method`, `--filter-class`, `--filter-not-trait` and
+  `--report-xunit-trx`; MSTest (`EnableMSTestRunner`) and NUnit (`EnableNUnitRunner`) with a
+  VSTest-style `--filter` and `--report-trx`. Exit codes: 0 passed, 2 tests failed, 8 zero tests
+  ran (not an error for Aftershock), 5 unknown option. `dotnet test` refuses the whole run when any
+  project of the solution is still a VSTest project ("All projects must use that test runner"), even
+  with `--project`.
+- NUnit's MTP runner needs NUnit3TestAdapter 5.1+: 5.0.0 (the sample's version) crashes under the
+  .NET 10 SDK's MTP mode (`KeyNotFoundException`, or `MissingMethodException` with a newer
+  TrxReport package). `EnableNUnitRunner` must be set before the adapter's props are imported (for
+  example in `Directory.Build.props`); in the project file it is too late.
+- xUnit v2 has no MTP runner; a v2 project in MTP mode fails with the SDK's message.
+- Not verified: nested classes in `--filter-method` (xUnit v3 is expected to use `+` like the
+  analyzer), the bridge on Windows (quoting goes through `CreateProcess` rules there), and the
+  console fallback below against a real project without the TRX extension.
+
+In MTP mode **xUnit v3 rejects `--filter`** (exit code 5, "Unknown option '--filter'"). xUnit v3
+offers `--filter-class`, `--filter-method`, `--filter-namespace`, `--filter-trait`, `--filter-uid`,
+the `--filter-not-*` variants and `--filter-query`. Exact selection therefore uses repeated
+`--filter-method Ns.Class.Method` options, which have the same length limits as 6.4
+(`--filter-class` per class, then batches). `aftershock.testFilter` is translated for xUnit v3 when it
+is `Trait=Value` / `Trait!=Value` terms joined with `&` (at most one `=`, because xUnit ORs options of
+the same kind) into `--filter-trait` / `--filter-not-trait`; anything else is ignored for that project
+with a warning. An xUnit project in bridge or MTP mode is treated as xUnit v3.
+
+When a test application has no TRX extension ("Unknown option '--report-trx'"), the run is repeated
+without it and the console output is parsed: `failed <name> (<time>)` blocks give the failures; the
+other selected tests count as passed when the exit code is 0 or 2.
 
 ### 6.3 Filters (VSTest mode)
 
 - Exact selection: `FullyQualifiedName=Ns.Class.Method` terms joined with `|`.
+- Literal `\`, `(`, `)`, `&`, `|`, `=`, `!` and `~` in a name are escaped with `\` (VSTest filter
+  syntax).
 - **xUnit**: `FullyQualifiedName` is `Ns.Class.Method` for every row of a `[Theory]` (the
   data appears only in the display name), so the exact term selects all rows. Nested classes
   appear as `Outer+Inner`.
 - **NUnit**: the NUnit adapter puts the arguments of parameterized tests into the fully
-  qualified name, for example `Ns.Class.Method(1,2)` for `[TestCase(1, 2)]`. An exact
-  `FullyQualifiedName=Ns.Class.Method` misses them. For NUnit test methods with parameters,
-  add a prefix term: `FullyQualifiedName~Ns.Class.Method\(` (the `(` must be escaped with `\`
-  in VSTest filter syntax, like `)`, `&`, `|`, `=`, `!` and `~`).
+  qualified name, for example `Ns.Class.Method(1,2)` for `[TestCase(1, 2)]`, so with the plain VSTest
+  filter engine an exact `FullyQualifiedName=Ns.Class.Method` misses them. The originally planned
+  prefix term `FullyQualifiedName~Ns.Class.Method\(` **crashes NUnit3TestAdapter 5.0** (verified in M3:
+  its VSTest-to-NUnit filter converter loops on the escaped parenthesis until "Insufficient memory");
+  an unescaped `(` is rejected ("Missing ')'"). Aftershock therefore selects parameterized NUnit tests
+  with `FullyQualifiedName~Ns.Class.Method` (contains, without the parenthesis): it matches every case
+  with adapters 3.x-5.x (verified with 5.0 and, under MTP, 5.2) and over-selects only methods whose
+  full name contains this one (`Method` also matches `MethodTwo`). Adapter 4+/5 converts `=` into an
+  NUnit filter that matches the parameterized method suite too, but 3.x does not, so `~` is the safe
+  choice. Non-parameterized NUnit tests use `=`.
 - **MSTest**: data rows share `Ns.Class.Method`, like xUnit.
 - Display names are never used for selection.
 - Extra user filter (`aftershock.testFilter`, for example `Category!=Integration`) is combined
-  as `(<selection>)&(<user filter>)`.
+  as `(<selection>)&(<user filter>)`. A project that runs completely gets the user filter alone.
 
 ### 6.4 Command-line length
 
-- If the filter is longer than 8000 characters (setting), reduce it to class level
-  (`FullyQualifiedName~Ns.Class.`). If it is still too long, split the tests into batches and
-  run `dotnet test` once per batch. The Windows command-line limit is about 32K characters.
-- To evaluate in M3: passing the filter through a generated `.runsettings` file instead of the
-  command line.
+- If the filter is longer than 8000 characters (a constant in M3; a setting can follow if real
+  solutions need it), reduce it to class level (`FullyQualifiedName~Ns.Class.`). If it is still too
+  long, split the class terms into batches of at most 8000 characters (user filter included) and run
+  `dotnet test` once per batch (sequentially, each with its own TRX). The Windows command-line limit
+  is about 32K characters. The same limits apply to the xUnit v3 options (`--filter-method` ->
+  `--filter-class` -> batches).
+- Not done in M3: passing the filter through a generated `.runsettings` file instead of the command
+  line (the batches made it unnecessary so far).
 
 ### 6.5 Results
 
-- `dotnet test <test.csproj> --no-build --logger trx --results-directory <tmp> --filter "<filter>"`
+- `dotnet test <test.csproj> --no-build --logger "trx;LogFileName=<name>.trx" --results-directory <dir> --filter "<filter>"`
   in VSTest mode. In MTP mode, TRX comes from `--report-trx` (needs the TRX extension) or
-  `--report-xunit-trx` (xUnit v3); console parsing is the fallback.
+  `--report-xunit-trx` (xUnit v3); console parsing is the fallback (6.2). Each run gets its own folder
+  under the extension's workspace storage (`results/run-<time>-...`, one subfolder per project and
+  batch; the five newest runs are kept), so batches and multi-targeted projects cannot overwrite each
+  other's files. Every `.trx` in the folder is read.
+- The TRX parser reads the VSTest logger's, MTP's and xUnit v3's files (fixtures from all four sample
+  projects in both runners are in `extension/test/fixtures/trx`). Cases are folded into their method
+  (`TestMethod/@className` + `@name` without the argument list: NUnit writes `Method(1,2)`, MTP's
+  MSTest report `Method (1,True)`); a method failed if any case failed, and the first failing case's
+  message and stack trace are kept. When the name is a custom display name, the first stack frame of
+  the class gives the method.
+- Pass/fail comes from the TRX, not from the exit code; a run without results and a non-zero exit
+  code is reported as "could not run" with the end of its output.
 - TRX results feed the Problems panel (section 9).
-- Tests that failed in the previous run are added to the next run even if not selected, until
-  they pass.
+- Tests that failed in the previous run are added to the next run even if not selected, until they
+  pass. A previously failed test that produces no result in a later run (deleted, renamed, or
+  excluded by the user filter) is forgotten; so are failed tests of a project that ran completely
+  without them.
 
 ## 7. New-code coverage
 
@@ -590,17 +707,30 @@ Either way:
 - **Status bar**: `Analyzing…`, `Building…`, `Testing (12)…`,
   `✓ 12/12 · New code 87% (gate 85%)`, `✗ 2 failed`. Warning color when coverage is below the
   gate. Click opens the output channel. Tooltip shows fallback reasons and gate targets.
-- **Output channel**: duration of each step, selected tests with reason chains, fallback
-  reasons, analyzer and server messages.
-- **Problems panel**: failed tests as diagnostics on the test method's declaration line (from
-  TRX): message plus the first lines of the stack trace.
+  M3 shows (with codicons): `Loading solution…`, `Analyzing…`, `Restoring…`, `Building…`,
+  `Testing (N)…` (`Testing…` when whole projects run), `$(check) 12/12`, `$(error) 2 failed` (error
+  background), `Build failed`, `Test run failed`, `No impacted tests`, `Waiting for debug session`,
+  `Aftershock paused`, `Analyzer failed`. The tooltip has the last run (counts, save-to-result time),
+  the fallback reasons and the solution.
+- **Output channel** ("Aftershock", a log channel whose level the user can change): duration of each
+  step, selected tests with reason chains, fallback reasons, the exact `dotnet` commands, analyzer
+  and server messages; build output at debug level, analyzer stderr at trace level.
+- **Problems panel**: failed tests as diagnostics (source `Aftershock`, code = the test's full name) on
+  the test method's declaration line: the analyzer's `file`/`line`; else the declaration found in the
+  file of the first stack frame; else a search of the test project's `.cs` files for the class and
+  method. Message: the test, the failing case for data-driven tests, the failure message and the first
+  five stack lines. The diagnostics are rebuilt from the failed-test store after every run (so they
+  clear when tests pass) and restored on startup.
 - **Editor decorations**: uncovered new lines red, partially covered new lines (some conditions
   missed) yellow, as gutter marks plus a light background. Can be turned off.
 - **Commands**:
   - `Aftershock: Run All Tests`
-  - `Aftershock: Show Impacted Tests (Why?)`: selected tests with reason chains
+  - `Aftershock: Show Impacted Tests (Why?)`: selected tests with reason chains (M3: a Quick Pick of
+    the last run with each test's result and chain; picking one opens it)
   - `Aftershock: Recompute New-Code Coverage`
   - `Aftershock: Pause / Resume`
+  - `Aftershock: Restart Analyzer` (M3)
+  - `Aftershock: Show Output` (M3)
   - `Aftershock: Set Sonar Token`
   - `Aftershock: Analyze All Files in New Code`
 - Later: Test Explorer integration through the VS Code Testing API (`TestController`).
@@ -622,6 +752,7 @@ Either way:
 | `aftershock.debounceMs` | 1500 | Wait after a save |
 | `aftershock.maxImpactedSymbols` | 500 | BFS limit |
 | `aftershock.disableAnalyzersInBuild` | true | Turn off Roslyn analyzers in Aftershock's builds |
+| `aftershock.dotnetPath` | `dotnet` | The `dotnet` executable for the analyzer, builds and tests (M3) |
 | `aftershock.decorations` | true | Coverage decorations in the editor |
 | `aftershock.sonar.serverUrl` | `""` | SonarQube server; empty disables Sonar features |
 | `aftershock.sonar.projectKey` | auto | Found as described in 8.1 when empty |

@@ -1,0 +1,17 @@
+{
+  "extension.description": "Değişikliğinizin ulaşabildiği .NET test metotlarını çalıştırır: kayıtta bir Roslyn analizcisi etkilenen testleri bulur, yalnızca onların test projeleri derlenip çalıştırılır.",
+  "untrustedWorkspaces.description": "Aftershock çalışma alanındaki kodu derleyip çalıştırır; bunun için güvenilir bir çalışma alanı gerekir.",
+  "virtualWorkspaces.description": "Aftershock dotnet'i yerel dosya sisteminde çalıştırır.",
+  "command.runAllTests": "Tüm Testleri Çalıştır",
+  "command.showImpactedTests": "Etkilenen Testleri Göster (Neden?)",
+  "command.togglePause": "Duraklat / Devam Et",
+  "command.restartAnalyzer": "Analizciyi Yeniden Başlat",
+  "command.showOutput": "Çıktıyı Göster",
+  "config.solution": "Analiz edilecek solution (`.sln` veya `.slnx`); mutlak ya da çalışma alanı klasörüne göre göreli. Boşsa: çalışma alanı kökündeki ilk solution (ada göre), yoksa altındaki en sığ olanı.",
+  "config.debounceMs": "Kayıttan sonra analizden önce beklenecek süre (milisaniye). Bu sürede gelen diğer kayıtlar birlikte analiz edilir.",
+  "config.maxImpactedSymbols": "Değişen dosya başına çağıran aramasının sınırı (test olmayan semboller). Aşılırsa bağımlı test projeleri tümüyle çalışır. `0` sınırsız demektir.",
+  "config.fallbackGlobs": "Değişince bağımlı test projelerini tümüyle çalıştıran dosyalar (depo veya solution klasörüne göre; `/` içermeyen bir desen dosya adıyla her yerde eşleşir). Bir değer vermek varsayılanın yerini alır.",
+  "config.testFilter": "Her koşuya eklenen VSTest filtresi, örneğin `Category!=Integration`. Seçimle `(<seçim>)&(<filtre>)` olarak birleştirilir. Microsoft.Testing.Platform üzerindeki xUnit v3 için basit `Trait=Değer` / `Trait!=Değer` terimleri çevrilir.",
+  "config.disableAnalyzersInBuild": "Daha hızlı geri bildirim için Aftershock'un build'lerinde Roslyn analizcilerini kapatır (`-p:RunAnalyzers=false`). Normal build'leriniz ve CI etkilenmez.",
+  "config.dotnetPath": "Analizciyi, build'leri ve testleri çalıştırmak için kullanılan `dotnet` programı."
+}

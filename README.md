@@ -3,8 +3,9 @@
 **Save a C# file, and only the tests your change can reach run, with new-code coverage and
 Sonar C# rules shown live in VS Code.**
 
-> **Status: under development.** Nothing is published to the Marketplace yet. The M1 analyzer
-> CLI is in progress. See [Roadmap](#roadmap).
+> **Status: under development.** Nothing is published to the Marketplace yet. The analyzer (CLI and
+> server mode) and the extension's core loop (save, analyze, build, run the impacted tests) work; the
+> VSIX can be built from source. See [Roadmap](#roadmap).
 
 ## Why
 
@@ -55,15 +56,58 @@ The full technical design is in [docs/DESIGN.md](docs/DESIGN.md).
 
 Windows is the primary platform. Linux and macOS are supported.
 
-## Planned settings
+## Installing the extension (preview)
+
+There is no Marketplace release yet. Build the VSIX from source (needs Node.js 22, the .NET 8 or newer
+SDK and git):
+
+```bash
+cd extension
+npm ci
+npx @vscode/vsce package        # bundles the analyzer into dist/analyzer first
+code --install-extension aftershock-0.1.0.vsix
+```
+
+CI also attaches a VSIX to every run of the `Extension` job (artifact `vsix-*`). In VS Code with
+restricted marketplace access, install it with **Extensions: Install from VSIX...**.
+
+Open a folder that contains your solution and save a C# file. The status bar shows the steps
+(`Analyzing…`, `Building…`, `Testing (5)…`, then `✓ 5/5` or `✗ 1 failed`); click it for the output
+channel with the selected tests, their reason chains and the exact `dotnet` commands. Failed tests
+appear in the Problems panel at their declaration. Commands: `Aftershock: Run All Tests`,
+`Aftershock: Show Impacted Tests (Why?)`, `Aftershock: Pause / Resume`,
+`Aftershock: Restart Analyzer`, `Aftershock: Show Output`. Details:
+[extension/README.md](extension/README.md).
+
+Run the solution's `dotnet restore` once before the first save (the analyzer needs restored
+projects); afterwards Aftershock restores test projects itself when their project files change.
+
+### Developing the extension
+
+```bash
+cd extension
+npm ci
+npm run bundle-analyzer   # dotnet publish of the analyzer into dist/analyzer
+npm test                  # unit tests (plain Node, no VS Code)
+npm run test:e2e          # the core against a temporary git copy of samples/ImpactSample
+xvfb-run -a npm run test:integration   # VS Code 1.85 on a virtual display (no xvfb-run on Windows/macOS)
+npm run typecheck && npm run lint
+```
+
+Open `extension/` in VS Code and press F5 (`Run Aftershock`) to try it in a development host;
+without a bundle it uses the analyzer from `analyzer/.../bin/{Release,Debug}`.
+
+## Settings
+
+Available now: `aftershock.solution`, `aftershock.debounceMs`, `aftershock.maxImpactedSymbols`,
+`aftershock.fallbackGlobs`, `aftershock.testFilter`, `aftershock.disableAnalyzersInBuild`,
+`aftershock.dotnetPath` (see [extension/README.md](extension/README.md#settings)). Planned:
 
 | Setting | Default | |
 |---|---|---|
-| `aftershock.solution` | auto | Solution to analyze |
 | `aftershock.targetBranch` | auto | Branch that defines "new code" |
 | `aftershock.coverageThreshold` | 85 | Coverage target when the server value is not available |
 | `aftershock.coverageTool` | `coverlet` | `coverlet` or `microsoft`; use the same tool as your pipeline |
-| `aftershock.testFilter` | `""` | Extra filter for every run, for example `Category!=Integration` |
 | `aftershock.sonar.serverUrl` | `""` | Your SonarQube server; empty turns Sonar features off |
 | `aftershock.sonar.showAllIssues` | false | Show all issues in the file, not only new code |
 
@@ -87,9 +131,9 @@ in settings files.
 ## Roadmap
 
 - [ ] **M0** Measurement script for real solutions ([scripts/measure-build.ps1](scripts/measure-build.ps1), [guide](docs/M0-measurement.md)): script ready, waiting for real-world numbers
-- [ ] **M1** Analyzer CLI: impacted tests with reason chains as JSON (in progress)
-- [ ] **M2** Analyzer server mode: warm workspace, incremental updates
-- [ ] **M3** Extension core loop: save, analyze, build, run filtered tests, report
+- [x] **M1** Analyzer CLI: impacted tests with reason chains as JSON
+- [x] **M2** Analyzer server mode: warm workspace, incremental updates
+- [x] **M3** Extension core loop: save, analyze, build, run filtered tests, report
 - [ ] **M4** New-code coverage with the Sonar formula and editor decorations
 - [ ] **M5** SonarQube connection and local Sonar C# rules on new code
 - [ ] **M6** Polish: "Why?" view, Test Explorer integration, Marketplace release

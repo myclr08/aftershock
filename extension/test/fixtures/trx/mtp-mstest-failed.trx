@@ -1,0 +1,53 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="c63ea810-a94d-4ff7-bfc3-0c49333c889e" name="@build-host 2026-11-12 01:15:05.0838755" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-11-12T01:15:04.9765337Z" queuing="2026-11-12T01:15:04.9765337Z" start="2026-11-12T01:15:04.9765337Z" finish="2026-11-12T01:15:05.0841394Z" />
+  <TestSettings name="default" id="c404046b-782b-48b0-9143-00456b9beea1">
+    <Deployment runDeploymentRoot="_build-host_2026-11-12_01_15_05.0838755" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="7a4c42db-55ea-44ca-add4-8a59c472e198" testId="3a3dcdea-48ed-7b3d-5757-1cf7ca08fed4" testName="CanRedeem_RespectsThreshold (99,False)" computerName="build-host" duration="00:00:00.0050833" startTime="2026-11-12T01:15:05.0499980+00:00" endTime="2026-11-12T01:15:05.0656705+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="7a4c42db-55ea-44ca-add4-8a59c472e198" />
+    <UnitTestResult executionId="b513880a-e353-4d13-8e04-55213881ce97" testId="ad8e6648-0bda-6981-b670-ee6d70b42ef1" testName="CanRedeem_RespectsThreshold (100,True)" computerName="build-host" duration="00:00:00.0002457" startTime="2026-11-12T01:15:05.0679290+00:00" endTime="2026-11-12T01:15:05.0683594+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Passed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="b513880a-e353-4d13-8e04-55213881ce97" />
+    <UnitTestResult executionId="b4b333ec-4548-4c08-aecc-dfd41a220315" testId="2823f1b4-a5a8-d44d-eab1-507b840f3d5b" testName="Reset_ClearsPoints" computerName="build-host" duration="00:00:00.0084919" startTime="2026-11-12T01:15:05.0683996+00:00" endTime="2026-11-12T01:15:05.0784270+00:00" testType="13CDC9D9-DDB5-4fa4-A97D-D965CCFC6D4B" outcome="Failed" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" relativeResultsDirectory="b4b333ec-4548-4c08-aecc-dfd41a220315">
+      <Output>
+        <ErrorInfo>
+          <Message>Assert.AreEqual failed. Expected:&lt;1&gt;. Actual:&lt;0&gt;. </Message>
+          <StackTrace>   at Sample.Tests.MSTest.LoyaltyServiceTests.Reset_ClearsPoints() in /work/impactsample/tests/Sample.Tests.MSTest/LoyaltyServiceTests.cs:line 36
+   at System.Reflection.MethodBaseInvoker.InterpretedInvoke_Method(Object obj, IntPtr* args)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="CanRedeem_RespectsThreshold (99,False)" storage="/work/impactsample/tests/sample.tests.mstest/bin/debug/net8.0/sample.tests.mstest.dll" id="3a3dcdea-48ed-7b3d-5757-1cf7ca08fed4">
+      <Execution id="7a4c42db-55ea-44ca-add4-8a59c472e198" />
+      <TestMethod codeBase="/work/impactsample/tests/Sample.Tests.MSTest/bin/Debug/net8.0/Sample.Tests.MSTest.dll" adapterTypeName="executor://MSTestExtension/3.11.1" className="Sample.Tests.MSTest.LoyaltyServiceTests" name="CanRedeem_RespectsThreshold (99,False)" />
+    </UnitTest>
+    <UnitTest name="CanRedeem_RespectsThreshold (100,True)" storage="/work/impactsample/tests/sample.tests.mstest/bin/debug/net8.0/sample.tests.mstest.dll" id="ad8e6648-0bda-6981-b670-ee6d70b42ef1">
+      <Execution id="b513880a-e353-4d13-8e04-55213881ce97" />
+      <TestMethod codeBase="/work/impactsample/tests/Sample.Tests.MSTest/bin/Debug/net8.0/Sample.Tests.MSTest.dll" adapterTypeName="executor://MSTestExtension/3.11.1" className="Sample.Tests.MSTest.LoyaltyServiceTests" name="CanRedeem_RespectsThreshold (100,True)" />
+    </UnitTest>
+    <UnitTest name="Reset_ClearsPoints" storage="/work/impactsample/tests/sample.tests.mstest/bin/debug/net8.0/sample.tests.mstest.dll" id="2823f1b4-a5a8-d44d-eab1-507b840f3d5b">
+      <Execution id="b4b333ec-4548-4c08-aecc-dfd41a220315" />
+      <TestMethod codeBase="/work/impactsample/tests/Sample.Tests.MSTest/bin/Debug/net8.0/Sample.Tests.MSTest.dll" adapterTypeName="executor://MSTestExtension/3.11.1" className="Sample.Tests.MSTest.LoyaltyServiceTests" name="Reset_ClearsPoints" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="3a3dcdea-48ed-7b3d-5757-1cf7ca08fed4" executionId="7a4c42db-55ea-44ca-add4-8a59c472e198" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="ad8e6648-0bda-6981-b670-ee6d70b42ef1" executionId="b513880a-e353-4d13-8e04-55213881ce97" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestEntry testId="2823f1b4-a5a8-d44d-eab1-507b840f3d5b" executionId="b4b333ec-4548-4c08-aecc-dfd41a220315" testListId="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8C84FA94-04C1-424b-9868-57A2D4851A1D" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Failed">
+    <Counters total="3" executed="3" passed="2" failed="1" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <RunInfos>
+      <RunInfo computerName="build-host" outcome="Error" timestamp="2026-11-12T01:15:05.0880589">
+        <Text>Exit code indicates failure: '2'. Please refer to https://aka.ms/testingplatform/exitcodes for more information.</Text>
+      </RunInfo>
+    </RunInfos>
+  </ResultSummary>
+</TestRun>

@@ -250,9 +250,10 @@ NUnit3TestAdapter 5.0, MSTest 3.11):
 - xUnit and MSTest: `FullyQualifiedName=<fullyQualifiedName>` matches every data row of a
   theory/data test.
 - NUnit with `parameterized: true`: the adapter appends the arguments
-  (`Ns.Class.Method(1,14.99d)`), so `FullyQualifiedName=` does not match. Use a prefix match on
-  the name plus the opening parenthesis, escaped for the VSTest filter syntax:
-  `FullyQualifiedName~Ns.Class.Method\(`. Non-parameterized NUnit tests can use `=`.
+  (`Ns.Class.Method(1,14.99d)`). Do **not** use `FullyQualifiedName~Ns.Class.Method\(`: NUnit3TestAdapter
+  5.0 crashes on the escaped parenthesis (found in M3). The extension uses
+  `FullyQualifiedName~Ns.Class.Method` (contains); see [DESIGN.md 6.3](DESIGN.md#63-filters-vstest-mode).
+  Non-parameterized NUnit tests can use `=`.
 - Inherited tests are reported per concrete class (`Ns.Derived.Method`), which is the name all
   three adapters use.
 

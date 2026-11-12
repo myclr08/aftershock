@@ -1,0 +1,161 @@
+{
+  "name": "aftershock",
+  "displayName": "Aftershock",
+  "description": "%extension.description%",
+  "version": "0.1.0",
+  "publisher": "aftershock-dev",
+  "license": "MIT",
+  "preview": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/myclr08/aftershock.git",
+    "directory": "extension"
+  },
+  "bugs": {
+    "url": "https://github.com/myclr08/aftershock/issues"
+  },
+  "homepage": "https://github.com/myclr08/aftershock#readme",
+  "engines": {
+    "vscode": "^1.85.0",
+    "node": ">=18"
+  },
+  "categories": [
+    "Testing"
+  ],
+  "keywords": [
+    "dotnet",
+    "csharp",
+    "xunit",
+    "nunit",
+    "mstest",
+    "impacted tests",
+    "roslyn"
+  ],
+  "main": "./dist/extension.js",
+  "l10n": "./l10n",
+  "activationEvents": [
+    "workspaceContains:**/*.sln",
+    "workspaceContains:**/*.slnx",
+    "workspaceContains:**/*.csproj"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "%untrustedWorkspaces.description%"
+    },
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "%virtualWorkspaces.description%"
+    }
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "aftershock.runAllTests",
+        "title": "%command.runAllTests%",
+        "category": "Aftershock"
+      },
+      {
+        "command": "aftershock.showImpactedTests",
+        "title": "%command.showImpactedTests%",
+        "category": "Aftershock"
+      },
+      {
+        "command": "aftershock.togglePause",
+        "title": "%command.togglePause%",
+        "category": "Aftershock"
+      },
+      {
+        "command": "aftershock.restartAnalyzer",
+        "title": "%command.restartAnalyzer%",
+        "category": "Aftershock"
+      },
+      {
+        "command": "aftershock.showOutput",
+        "title": "%command.showOutput%",
+        "category": "Aftershock"
+      }
+    ],
+    "configuration": {
+      "title": "Aftershock",
+      "properties": {
+        "aftershock.solution": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "markdownDescription": "%config.solution%"
+        },
+        "aftershock.debounceMs": {
+          "type": "integer",
+          "default": 1500,
+          "minimum": 0,
+          "maximum": 60000,
+          "scope": "resource",
+          "markdownDescription": "%config.debounceMs%"
+        },
+        "aftershock.maxImpactedSymbols": {
+          "type": "integer",
+          "default": 500,
+          "minimum": 0,
+          "scope": "resource",
+          "markdownDescription": "%config.maxImpactedSymbols%"
+        },
+        "aftershock.fallbackGlobs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "**/appsettings*.json"
+          ],
+          "scope": "resource",
+          "markdownDescription": "%config.fallbackGlobs%"
+        },
+        "aftershock.testFilter": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "markdownDescription": "%config.testFilter%"
+        },
+        "aftershock.disableAnalyzersInBuild": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "markdownDescription": "%config.disableAnalyzersInBuild%"
+        },
+        "aftershock.dotnetPath": {
+          "type": "string",
+          "default": "dotnet",
+          "scope": "machine-overridable",
+          "markdownDescription": "%config.dotnetPath%"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build:prod && npm run bundle-analyzer",
+    "build": "node esbuild.mjs",
+    "build:prod": "node esbuild.mjs --production",
+    "watch": "node esbuild.mjs --watch",
+    "bundle-analyzer": "node scripts/bundle-analyzer.mjs",
+    "typecheck": "tsc -p . --noEmit",
+    "lint": "eslint src test scripts esbuild.mjs",
+    "test": "vitest run",
+    "test:e2e": "vitest run --config vitest.e2e.config.mts",
+    "test:integration": "node esbuild.mjs && node test/integration/runTest.mjs",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.0",
+    "@types/node": "^20.19.0",
+    "@types/vscode": "1.85.0",
+    "@vscode/test-electron": "^3.1.0",
+    "@vscode/vsce": "^3.9.2",
+    "esbuild": "^0.25.0",
+    "eslint": "^9.39.0",
+    "fast-xml-parser": "^5.3.0",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.46.0",
+    "vitest": "^4.1.0"
+  }
+}

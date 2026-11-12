@@ -1,0 +1,64 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="9805bb65-c5cf-4fa8-a004-b8b3a51c5522" name="@build-host 2026-11-12 04:12:00" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-11-12T04:12:00.5695159+03:00" queuing="2026-11-12T04:12:00.5695160+03:00" start="2026-11-12T04:11:59.9221322+03:00" finish="2026-11-12T04:12:00.5733994+03:00" />
+  <TestSettings name="default" id="de6ee737-1dbb-44fa-98fb-80c54cdfe9fe">
+    <Deployment runDeploymentRoot="_build-host_2026-11-12_04_12_00" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="94ca68e8-b7ff-42eb-a9de-935cd54f9982" testId="62d2572c-b012-9856-f3c0-105214ffec7d" testName="Sample.Tests.XUnitV3.MoneyV3Tests.Add_IsCommutative(left: 5, right: 2)" computerName="build-host" duration="00:00:00.0001916" startTime="2026-11-12T04:12:00.4923182+03:00" endTime="2026-11-12T04:12:00.4925273+03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="94ca68e8-b7ff-42eb-a9de-935cd54f9982" />
+    <UnitTestResult executionId="ba188a34-95bc-4dac-8c73-f1761a54fc7e" testId="4271d74e-a8ba-a84c-0455-4cb737a3caad" testName="Sample.Tests.XUnitV3.CatalogV3Tests.PriceOf_Book" computerName="build-host" duration="00:00:00.0093233" startTime="2026-11-12T04:12:00.4738303+03:00" endTime="2026-11-12T04:12:00.4879925+03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="ba188a34-95bc-4dac-8c73-f1761a54fc7e" />
+    <UnitTestResult executionId="9f126716-e520-4b58-91ae-f5b9624f39ee" testId="316642d5-5980-765d-c071-3a58bb081e73" testName="Sample.Tests.XUnitV3.MoneyV3Tests.Add_ReturnsSum(left: 0.5, right: 0.25, expected: 0.75)" computerName="build-host" duration="00:00:00.0003345" startTime="2026-11-12T04:12:00.4908212+03:00" endTime="2026-11-12T04:12:00.4911962+03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="9f126716-e520-4b58-91ae-f5b9624f39ee" />
+    <UnitTestResult executionId="aba8da8e-459a-4c4f-b838-ac5af87eff21" testId="234cce81-a751-8ddd-629e-cd8fabedce11" testName="Sample.Tests.XUnitV3.MoneyV3Tests.Add_ReturnsSum(left: 1, right: 2, expected: 3)" computerName="build-host" duration="00:00:00.0094677" startTime="2026-11-12T04:12:00.4738305+03:00" endTime="2026-11-12T04:12:00.4879955+03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="aba8da8e-459a-4c4f-b838-ac5af87eff21" />
+    <UnitTestResult executionId="df6e85c5-ddd4-48f7-9f19-9c02b733902f" testId="135662ac-7f5a-e925-f6bc-9235128d157c" testName="Sample.Tests.XUnitV3.CatalogCountV3Tests.Count_IsThree" computerName="build-host" duration="00:00:00.0018210" startTime="2026-11-12T04:12:00.4938793+03:00" endTime="2026-11-12T04:12:00.4957213+03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="df6e85c5-ddd4-48f7-9f19-9c02b733902f" />
+    <UnitTestResult executionId="18308981-40da-4884-9018-73a977d685c8" testId="45c52c7a-96b5-0a6b-9755-6295df095a47" testName="Sample.Tests.XUnitV3.MoneyV3Tests.Add_IsCommutative(left: 1.25, right: 0.75)" computerName="build-host" duration="00:00:00.0001376" startTime="2026-11-12T04:12:00.4920265+03:00" endTime="2026-11-12T04:12:00.4921847+03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="18308981-40da-4884-9018-73a977d685c8" />
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="Sample.Tests.XUnitV3.MoneyV3Tests.Add_ReturnsSum(left: 0.5, right: 0.25, expected: 0.75)" storage="/work/impactsample/tests/sample.tests.xunitv3/bin/debug/net8.0/sample.tests.xunitv3.dll" id="316642d5-5980-765d-c071-3a58bb081e73">
+      <Execution id="9f126716-e520-4b58-91ae-f5b9624f39ee" />
+      <TestMethod codeBase="/work/impactsample/tests/Sample.Tests.XUnitV3/bin/Debug/net8.0/Sample.Tests.XUnitV3.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="Sample.Tests.XUnitV3.MoneyV3Tests" name="Add_ReturnsSum" />
+    </UnitTest>
+    <UnitTest name="Sample.Tests.XUnitV3.MoneyV3Tests.Add_ReturnsSum(left: 1, right: 2, expected: 3)" storage="/work/impactsample/tests/sample.tests.xunitv3/bin/debug/net8.0/sample.tests.xunitv3.dll" id="234cce81-a751-8ddd-629e-cd8fabedce11">
+      <Execution id="aba8da8e-459a-4c4f-b838-ac5af87eff21" />
+      <TestMethod codeBase="/work/impactsample/tests/Sample.Tests.XUnitV3/bin/Debug/net8.0/Sample.Tests.XUnitV3.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="Sample.Tests.XUnitV3.MoneyV3Tests" name="Add_ReturnsSum" />
+    </UnitTest>
+    <UnitTest name="Sample.Tests.XUnitV3.MoneyV3Tests.Add_IsCommutative(left: 5, right: 2)" storage="/work/impactsample/tests/sample.tests.xunitv3/bin/debug/net8.0/sample.tests.xunitv3.dll" id="62d2572c-b012-9856-f3c0-105214ffec7d">
+      <Execution id="94ca68e8-b7ff-42eb-a9de-935cd54f9982" />
+      <TestMethod codeBase="/work/impactsample/tests/Sample.Tests.XUnitV3/bin/Debug/net8.0/Sample.Tests.XUnitV3.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="Sample.Tests.XUnitV3.MoneyV3Tests" name="Add_IsCommutative" />
+    </UnitTest>
+    <UnitTest name="Sample.Tests.XUnitV3.CatalogV3Tests.PriceOf_Book" storage="/work/impactsample/tests/sample.tests.xunitv3/bin/debug/net8.0/sample.tests.xunitv3.dll" id="4271d74e-a8ba-a84c-0455-4cb737a3caad">
+      <Execution id="ba188a34-95bc-4dac-8c73-f1761a54fc7e" />
+      <TestMethod codeBase="/work/impactsample/tests/Sample.Tests.XUnitV3/bin/Debug/net8.0/Sample.Tests.XUnitV3.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="Sample.Tests.XUnitV3.CatalogV3Tests" name="PriceOf_Book" />
+    </UnitTest>
+    <UnitTest name="Sample.Tests.XUnitV3.CatalogCountV3Tests.Count_IsThree" storage="/work/impactsample/tests/sample.tests.xunitv3/bin/debug/net8.0/sample.tests.xunitv3.dll" id="135662ac-7f5a-e925-f6bc-9235128d157c">
+      <Execution id="df6e85c5-ddd4-48f7-9f19-9c02b733902f" />
+      <TestMethod codeBase="/work/impactsample/tests/Sample.Tests.XUnitV3/bin/Debug/net8.0/Sample.Tests.XUnitV3.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="Sample.Tests.XUnitV3.CatalogCountV3Tests" name="Count_IsThree" />
+    </UnitTest>
+    <UnitTest name="Sample.Tests.XUnitV3.MoneyV3Tests.Add_IsCommutative(left: 1.25, right: 0.75)" storage="/work/impactsample/tests/sample.tests.xunitv3/bin/debug/net8.0/sample.tests.xunitv3.dll" id="45c52c7a-96b5-0a6b-9755-6295df095a47">
+      <Execution id="18308981-40da-4884-9018-73a977d685c8" />
+      <TestMethod codeBase="/work/impactsample/tests/Sample.Tests.XUnitV3/bin/Debug/net8.0/Sample.Tests.XUnitV3.dll" adapterTypeName="executor://xunit/VsTestRunner3/netcore/" className="Sample.Tests.XUnitV3.MoneyV3Tests" name="Add_IsCommutative" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="62d2572c-b012-9856-f3c0-105214ffec7d" executionId="94ca68e8-b7ff-42eb-a9de-935cd54f9982" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="4271d74e-a8ba-a84c-0455-4cb737a3caad" executionId="ba188a34-95bc-4dac-8c73-f1761a54fc7e" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="316642d5-5980-765d-c071-3a58bb081e73" executionId="9f126716-e520-4b58-91ae-f5b9624f39ee" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="234cce81-a751-8ddd-629e-cd8fabedce11" executionId="aba8da8e-459a-4c4f-b838-ac5af87eff21" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="135662ac-7f5a-e925-f6bc-9235128d157c" executionId="df6e85c5-ddd4-48f7-9f19-9c02b733902f" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="45c52c7a-96b5-0a6b-9755-6295df095a47" executionId="18308981-40da-4884-9018-73a977d685c8" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Completed">
+    <Counters total="6" executed="6" passed="6" failed="0" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.1.5+1b188a7b0a (64-bit .NET 10.0.8)
+[xUnit.net 00:00:00.09]   Discovering: Sample.Tests.XUnitV3
+[xUnit.net 00:00:00.20]   Discovered:  Sample.Tests.XUnitV3
+[xUnit.net 00:00:00.31]   Starting:    Sample.Tests.XUnitV3
+[xUnit.net 00:00:00.37]   Finished:    Sample.Tests.XUnitV3 (ID = 'd25e798d0949c07948b4eb38c914b8d8d7d7641df7e5914d299427ee46a1ecdf')
+</StdOut>
+    </Output>
+  </ResultSummary>
+</TestRun>
