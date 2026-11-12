@@ -44,6 +44,12 @@ let orchestrator: Orchestrator;
 /** Hook into every dotnet the executor starts (to watch the build's process tree). */
 let onDotnetStart: ((args: readonly string[], pid: number) => void) | undefined;
 
+/**
+ * Extra environment for `dotnet build` while the cancellation test wants a build that cannot finish
+ * on its own (see writeSleepTargets). Undefined for every other build.
+ */
+let slowBuildEnvironment: NodeJS.ProcessEnv | undefined;
+
 function git(...args: string[]): void {
   const result = spawnSync('git', ['-c', 'user.name=Aftershock E2E', '-c', 'user.email=e2e@example.invalid', '-c', 'commit.gpgsign=false', '-c', 'core.autocrlf=false', ...args], { cwd: repo, encoding: 'utf8' });
   if (result.status !== 0) {
@@ -78,12 +84,24 @@ async function saveAndWait(files: string[]): Promise<RunSummary> {
 const lastPlan = () => plansSeen[plansSeen.length - 1];
 const lastOutcome = () => outcomes[outcomes.length - 1];
 
-/** Processes of the group led by `pid` (POSIX) or the tree below `pid` (Windows). */
-function processTree(pid: number): number[] {
+interface ProcessInfo {
+  pid: number;
+  name: string;
+}
+
+/**
+ * One snapshot of the processes in the group led by `pid` (POSIX) or in the tree below `pid`
+ * (Windows). On Windows this starts PowerShell (a cold start takes seconds on CI), so callers take it
+ * once, while the tree is known to be stable, and never poll it.
+ */
+function processTree(pid: number): ProcessInfo[] {
   if (process.platform === 'win32') {
-    const script = `Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId | ConvertTo-Json -Compress`;
-    const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { encoding: 'utf8', windowsHide: true });
-    const rows = JSON.parse(result.stdout || '[]') as { ProcessId: number; ParentProcessId: number }[];
+    const script = 'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name | ConvertTo-Json -Compress';
+    const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { encoding: 'utf8', windowsHide: true, maxBuffer: 16 * 1024 * 1024 });
+    if (result.status !== 0 || !result.stdout.trim()) {
+      throw new Error(`Win32_Process snapshot failed (${result.status ?? result.error?.message}): ${result.stderr}`);
+    }
+    const rows = JSON.parse(result.stdout) as { ProcessId: number; ParentProcessId: number; Name: string }[];
     const tree = new Set([pid]);
     let grew = true;
     while (grew) {
@@ -95,36 +113,93 @@ function processTree(pid: number): number[] {
         }
       }
     }
-    return [...tree].filter((p) => rows.some((r) => r.ProcessId === p));
+    return rows.filter((row) => tree.has(row.ProcessId)).map((row) => ({ pid: row.ProcessId, name: row.Name }));
   }
   // `ps` lists every process with its process group; no pattern matching on command lines.
-  const result = spawnSync('ps', ['-A', '-o', 'pid=,pgid='], { encoding: 'utf8' });
-  return result.stdout
-    .split('\n')
-    .map((line) => line.trim().split(/\s+/).map(Number))
-    .filter(([p, g]) => g === pid && !Number.isNaN(p))
-    .map(([p]) => p);
+  const result = spawnSync('ps', ['-A', '-o', 'pid=,pgid=,comm='], { encoding: 'utf8' });
+  const tree: ProcessInfo[] = [];
+  for (const line of result.stdout.split('\n')) {
+    const match = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line);
+    if (match && Number(match[2]) === pid) {
+      tree.push({ pid: Number(match[1]), name: match[3].trim() });
+    }
+  }
+  return tree;
 }
 
-/** Executable names of the given PIDs (for the report). */
-function processNames(pids: number[]): string[] {
-  if (process.platform === 'win32' || pids.length === 0) {
+/** The given processes that still run. Windows: one `tasklist` call, the name guards against PID reuse. */
+function stillRunning(processes: readonly ProcessInfo[]): ProcessInfo[] {
+  if (processes.length === 0) {
     return [];
   }
-  const result = spawnSync('ps', ['-o', 'comm=', '-p', pids.join(',')], { encoding: 'utf8' });
-  return result.stdout.split('\n').map((l) => l.trim()).filter(Boolean);
+  if (process.platform === 'win32') {
+    const result = spawnSync('tasklist', ['/FO', 'CSV', '/NH'], { encoding: 'utf8', windowsHide: true });
+    const running = new Map<number, string>();
+    for (const line of result.stdout.split(/\r?\n/)) {
+      const match = /^"([^"]*)","(\d+)"/.exec(line);
+      if (match) {
+        running.set(Number(match[2]), match[1].toLowerCase());
+      }
+    }
+    if (result.status !== 0 || running.size === 0) {
+      throw new Error(`tasklist failed (${result.status ?? result.error?.message}): ${result.stderr}`);
+    }
+    return processes.filter((p) => running.get(p.pid) === p.name.toLowerCase());
+  }
+  return processes.filter((p) => {
+    try {
+      process.kill(p.pid, 0);
+      return true;
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code === 'EPERM';
+    }
+  });
 }
 
-function alive(pid: number): boolean {
+/** Cleanup after a failed assertion only; the code under test does the real tree kill. */
+function forceKill(pid: number): void {
   if (process.platform === 'win32') {
-    const result = spawnSync('tasklist', ['/FI', `PID eq ${pid}`, '/NH'], { encoding: 'utf8', windowsHide: true });
-    return result.stdout.includes(` ${pid} `);
+    spawnSync('taskkill', ['/F', '/PID', String(pid)], { windowsHide: true, stdio: 'ignore' });
+    return;
   }
   try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'EPERM';
+    process.kill(pid, 'SIGKILL');
+  } catch {
+    // Already gone.
+  }
+}
+
+/**
+ * MSBuild imports `$(CustomAfterMicrosoftCommonTargets)` into every project when it is set (here: as
+ * an environment variable of a single `dotnet build`), so the sample repository stays untouched and
+ * the analyzer never sees a changed build file. After the compiler ran, the build waits for a sleeping
+ * grandchild that writes its own PID to `$AFTERSHOCK_E2E_SLEEPER_PID`; a cancellation then always
+ * meets a live build tree, however fast the machine compiles.
+ */
+function writeSleepTargets(target: string): void {
+  const windows = 'powershell.exe -NoProfile -NonInteractive -Command &quot;Set-Content -LiteralPath $env:AFTERSHOCK_E2E_SLEEPER_PID -Value $PID; Start-Sleep -Seconds 60&quot;';
+  const posix = 'echo $$ &gt; &quot;$AFTERSHOCK_E2E_SLEEPER_PID&quot;; exec sleep 60';
+  fs.writeFileSync(
+    target,
+    [
+      '<Project>',
+      '  <Target Name="AftershockE2ESleep" AfterTargets="CoreCompile">',
+      `    <Exec Condition="'$(OS)' == 'Windows_NT'" Command="${windows}" />`,
+      `    <Exec Condition="'$(OS)' != 'Windows_NT'" Command="${posix}" />`,
+      '  </Target>',
+      '</Project>',
+      '',
+    ].join('\n'),
+  );
+}
+
+/** The PID a sleeper wrote, once its line is complete (echo and Set-Content both end it). */
+function readPid(file: string): number | undefined {
+  try {
+    const match = /^\uFEFF?(\d+)\r?\n/.exec(fs.readFileSync(file, 'utf8'));
+    return match ? Number(match[1]) : undefined;
+  } catch {
+    return undefined;
   }
 }
 
@@ -160,6 +235,7 @@ beforeAll(async () => {
     runProcess: (options: RunOptions) =>
       runProcess({
         ...options,
+        env: slowBuildEnvironment && options.args[0] === 'build' ? { ...options.env, ...slowBuildEnvironment } : options.env,
         onSpawn: (pid) => {
           options.onSpawn?.(pid);
           onDotnetStart?.(options.args, pid);
@@ -248,51 +324,79 @@ describe('save -> analyze -> build -> test against samples/ImpactSample', () => 
   });
 
   it('a new save during the build cancels it and leaves no process of the build tree behind', async () => {
+    // The sample compiles in about two seconds, faster than a process snapshot on Windows: this build
+    // waits in a sleeping grandchild instead, so the cancellation always has a live tree to kill.
+    const targets = path.join(root, 'aftershock-e2e-sleep.targets');
+    const sleeperPidFile = path.join(root, 'sleeper.pid');
+    writeSleepTargets(targets);
+    fs.rmSync(sleeperPidFile, { force: true });
+    slowBuildEnvironment = { CustomAfterMicrosoftCommonTargets: targets, AFTERSHOCK_E2E_SLEEPER_PID: sleeperPidFile };
     let buildPid: number | undefined;
+    let sleeperPid: number | undefined;
+    let treeAtCancel: ProcessInfo[] = [];
     onDotnetStart = (args, pid) => {
       if (args[0] === 'build' && buildPid === undefined) {
         buildPid = pid;
       }
     };
-    // A declaration change in Sample.Core makes MSBuild compile two projects.
-    orchestrator.onSaved([edit('src/Sample.Core/Pricing/TaxRates.cs', '"NL" => 0.22m,', '"NL" => 0.23m,')]);
-    const end = Date.now() + 120000;
-    while (buildPid === undefined && Date.now() < end) {
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    }
-    expect(buildPid).toBeDefined();
-    // Let MSBuild start its worker nodes and the compiler, then cancel with a new save.
-    const settle = Date.now() + 3000;
-    while (Date.now() < settle && processTree(buildPid!).length < 2) {
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
-    const treeAtCancel = processTree(buildPid!);
-    const names = processNames(treeAtCancel);
-    const before = outcomes.length;
-    const cancelledAt = Date.now();
-    orchestrator.onSaved([edit('src/Sample.Core/Pricing/TaxRates.cs', '"NL" => 0.23m,', '"NL" => 0.21m,')]);
-    onDotnetStart = undefined;
+    try {
+      // A declaration change in Sample.Core makes MSBuild compile two projects.
+      orchestrator.onSaved([edit('src/Sample.Core/Pricing/TaxRates.cs', '"NL" => 0.22m,', '"NL" => 0.23m,')]);
+      const end = Date.now() + 120000;
+      while ((buildPid === undefined || sleeperPid === undefined) && orchestrator.isBusy && Date.now() < end) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        sleeperPid = readPid(sleeperPidFile);
+      }
+      expect(buildPid, 'the build did not start').toBeDefined();
+      expect(sleeperPid, 'the build did not reach the sleeping child').toBeDefined();
+      // The build now waits for the sleeper (60 s), so one snapshot shows the tree as the kill meets it.
+      treeAtCancel = processTree(buildPid!);
+      slowBuildEnvironment = undefined;
+      const before = outcomes.length;
+      const cancelledAt = Date.now();
+      orchestrator.onSaved([edit('src/Sample.Core/Pricing/TaxRates.cs', '"NL" => 0.23m,', '"NL" => 0.21m,')]);
+      onDotnetStart = undefined;
 
-    // All processes of the cancelled build disappear quickly.
-    const gone = Date.now() + 15000;
-    while (treeAtCancel.some(alive) && Date.now() < gone) {
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
-    const survivors = treeAtCancel.filter(alive);
-    timings.push(`cancellation: ${treeAtCancel.length} process(es) in the build tree at cancel${names.length ? ` (${names.join(', ')})` : ''}, all gone after ${formatDuration(Date.now() - cancelledAt)}; survivors: ${survivors.length}`);
-    expect(treeAtCancel.length).toBeGreaterThanOrEqual(1);
-    expect(survivors).toEqual([]);
-    expect(logger.lines.some((l) => l.includes('cancels the running build/test'))).toBe(true);
+      // All processes of the cancelled build, the sleeper included, disappear quickly.
+      const gone = Date.now() + 15000;
+      let survivors = stillRunning(treeAtCancel);
+      while (survivors.length > 0 && Date.now() < gone) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        survivors = stillRunning(treeAtCancel);
+      }
+      const names = treeAtCancel.map((p) => p.name).join(', ');
+      timings.push(`cancellation: ${treeAtCancel.length} process(es) in the build tree at cancel (${names}), all gone after ${formatDuration(Date.now() - cancelledAt)}; survivors: ${survivors.length}`);
+      const pids = treeAtCancel.map((p) => p.pid);
+      expect(pids, `build tree: ${names}`).toContain(buildPid);
+      expect(pids, `build tree: ${names}`).toContain(sleeperPid);
+      expect(treeAtCancel.length).toBeGreaterThanOrEqual(2);
+      expect(survivors).toEqual([]);
+      expect(logger.lines.some((l) => l.includes('cancels the running build/test'))).toBe(true);
 
-    // The next run covers the cancelled selection and the new change.
-    await orchestrator.whenIdle();
-    const endRun = Date.now() + 300000;
-    while (outcomes.length === before && Date.now() < endRun) {
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      // The next run covers the cancelled selection and the new change.
       await orchestrator.whenIdle();
+      const endRun = Date.now() + 300000;
+      while (outcomes.length === before && Date.now() < endRun) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        await orchestrator.whenIdle();
+      }
+      expect(lastPlan()[0].tests).toHaveLength(5);
+      expect(orchestrator.status.summary).toMatchObject({ passed: 5, failed: 0 });
+    } finally {
+      slowBuildEnvironment = undefined;
+      onDotnetStart = undefined;
+      // Only after a failure: nothing of this build may outlive the test (the sleeper would for 60 s),
+      // also not a sleeper that escaped the tree.
+      const watched = [...treeAtCancel];
+      if (sleeperPid !== undefined && !watched.some((p) => p.pid === sleeperPid)) {
+        watched.push({ pid: sleeperPid, name: process.platform === 'win32' ? 'powershell.exe' : 'sleep' });
+      }
+      try {
+        stillRunning(watched).forEach((p) => forceKill(p.pid));
+      } catch {
+        // Keep the test's own failure.
+      }
     }
-    expect(lastPlan()[0].tests).toHaveLength(5);
-    expect(orchestrator.status.summary).toMatchObject({ passed: 5, failed: 0 });
   });
 
   it('Run All Tests runs all four test projects', async () => {
