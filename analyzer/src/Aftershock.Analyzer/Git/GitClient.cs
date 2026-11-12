@@ -30,7 +30,10 @@ public sealed class GitClient
             WorkingDirectory = _workingDirectory,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
-            RedirectStandardInput = input is not null,
+            // Always redirect stdin. If the child inherited our own stdin, Windows would have to duplicate a
+            // synchronous pipe handle that has a pending read (the `serve` request loop), and CreateProcess
+            // blocks until that read completes, i.e. forever. A private pipe closed right away avoids it.
+            RedirectStandardInput = true,
             UseShellExecute = false,
             CreateNoWindow = true,
             StandardErrorEncoding = Encoding.UTF8,
@@ -53,6 +56,11 @@ public sealed class GitClient
         catch (Exception ex)
         {
             throw new InvalidOperationException($"could not start git ({ex.Message}); is git installed and on PATH?", ex);
+        }
+
+        if (input is null)
+        {
+            process.StandardInput.Close();
         }
 
         var outputTask = ReadAllAsync(process.StandardOutput.BaseStream, cancellationToken);
