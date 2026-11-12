@@ -4,6 +4,7 @@
   "virtualWorkspaces.description": "Aftershock dotnet'i yerel dosya sisteminde çalıştırır.",
   "command.runAllTests": "Tüm Testleri Çalıştır",
   "command.showImpactedTests": "Etkilenen Testleri Göster (Neden?)",
+  "command.recomputeCoverage": "Yeni Kod Coverage'ını Yeniden Hesapla",
   "command.togglePause": "Duraklat / Devam Et",
   "command.restartAnalyzer": "Analizciyi Yeniden Başlat",
   "command.showOutput": "Çıktıyı Göster",
@@ -13,5 +14,17 @@
   "config.fallbackGlobs": "Değişince bağımlı test projelerini tümüyle çalıştıran dosyalar (depo veya solution klasörüne göre; `/` içermeyen bir desen dosya adıyla her yerde eşleşir). Bir değer vermek varsayılanın yerini alır.",
   "config.testFilter": "Her koşuya eklenen VSTest filtresi, örneğin `Category!=Integration`. Seçimle `(<seçim>)&(<filtre>)` olarak birleştirilir. Microsoft.Testing.Platform üzerindeki xUnit v3 için basit `Trait=Değer` / `Trait!=Değer` terimleri çevrilir.",
   "config.disableAnalyzersInBuild": "Daha hızlı geri bildirim için Aftershock'un build'lerinde Roslyn analizcilerini kapatır (`-p:RunAnalyzers=false`). Normal build'leriniz ve CI etkilenmez.",
-  "config.dotnetPath": "Analizciyi, build'leri ve testleri çalıştırmak için kullanılan `dotnet` programı."
+  "config.dotnetPath": "Analizciyi, build'leri ve testleri çalıştırmak için kullanılan `dotnet` programı.",
+  "config.coverageEnabled": "Aftershock'un test koşularında coverage toplar ve yeni kodun (hedef branch'e göre eklenen veya değişen satırlar) coverage'ını gösterir. Kapalıysa coverage argümanı, süsleme veya sayı yoktur.",
+  "config.targetBranch": "Yeni kodu tanımlayan branch: yeni satırlar, çalışma ağacında `git merge-base HEAD <branch>`'e göre eklenen veya değişen satırlardır. Boşsa: `origin/HEAD`, sonra `origin/main`, `origin/master`, `origin/develop`.",
+  "config.coverageThreshold": "Yüzde olarak yeni kod coverage hedefi; uyarı rengi ve \"hedefe N kaldı\" sayısı için kullanılır. Sonar bağlandığında SonarQube quality gate'inden okunan eşik bunun yerine geçer.",
+  "config.coverageTool": "Coverage aracı. Sonar pipeline'ınızın kullandığını seçin: araçlar branch'leri farklı sayar. VSTest projeleri `coverlet.collector` (coverlet) veya `Microsoft.NET.Test.Sdk` (microsoft), Microsoft.Testing.Platform projeleri `coverlet.MTP` veya `Microsoft.Testing.Extensions.CodeCoverage` ister.",
+  "config.coverageTool.coverlet": "coverlet: `--collect \"XPlat Code Coverage\"` (VSTest) veya `--coverlet` (Microsoft.Testing.Platform), Cobertura çıktısı.",
+  "config.coverageTool.microsoft": "Microsoft Code Coverage: `--collect \"Code Coverage;Format=cobertura\"` (VSTest) veya `--coverage` (Microsoft.Testing.Platform).",
+  "config.coverageExclusions": "Yeni kod coverage'ına sayılmayan dosyalar; depo veya solution klasörüne göre glob desenleri (örneğin `**/Migrations/**`; `/` içermeyen bir desen dosya adıyla her yerde eşleşir). Projenin `sonar.coverage.exclusions` değeriyle aynı tutun. Test projeleri hiçbir zaman sayılmaz.",
+  "config.coverageDecorations": "Editörde yeni satırları işaretler: kapsanmayan satırlar kırmızı, koşullarından bir kısmı kapsanmayan satırlar sarı (kenar çubuğu ve satır arka planı).",
+  "color.uncoveredLineBackground": "Hiçbir testin kapsamadığı yeni satırların arka planı (Aftershock).",
+  "color.partialLineBackground": "Kapsanmayan koşulu olan yeni satırların arka planı (Aftershock).",
+  "color.uncoveredLineRuler": "Hiçbir testin kapsamadığı yeni satırların genel bakış cetvelindeki işareti (Aftershock).",
+  "color.partialLineRuler": "Kapsanmayan koşulu olan yeni satırların genel bakış cetvelindeki işareti (Aftershock)."
 }

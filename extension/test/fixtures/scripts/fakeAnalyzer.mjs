@@ -104,6 +104,15 @@ rl.on('line', (line) => {
       inFlight.set(id, timer);
       return;
     }
+    case 'impactSinceBase': {
+      if (!initialized) {
+        send({ id, error: { code: -32002, message: 'not initialized' } });
+        return;
+      }
+      // Echoes the parameters so tests can check what the client sent.
+      send({ id, result: { ...report(params.files ?? []), base: params.base, baseCommit: params.base, ...(params.mergeBase === false ? {} : { mergeBaseOf: 'HEAD' }), received: params } });
+      return;
+    }
     case '$/cancelRequest': {
       const timer = inFlight.get(params.id);
       if (timer) {

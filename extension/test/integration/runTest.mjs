@@ -41,6 +41,8 @@ try {
   run('git', ['init', '-q', '-b', 'main'], repo);
   run('git', [...git, 'add', '-A'], repo);
   run('git', [...git, 'commit', '-q', '-m', 'baseline'], repo);
+  // New-code coverage compares with origin/main: a fake remote branch at the baseline.
+  run('git', ['update-ref', 'refs/remotes/origin/main', 'HEAD'], repo);
   run('dotnet', ['restore', 'ImpactSample.sln', '-nologo'], workspace);
   // A short debounce keeps the test quick.
   fs.mkdirSync(path.join(workspace, '.vscode'), { recursive: true });

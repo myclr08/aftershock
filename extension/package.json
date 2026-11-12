@@ -61,6 +61,11 @@
         "category": "Aftershock"
       },
       {
+        "command": "aftershock.recomputeCoverage",
+        "title": "%command.recomputeCoverage%",
+        "category": "Aftershock"
+      },
+      {
         "command": "aftershock.togglePause",
         "title": "%command.togglePause%",
         "category": "Aftershock"
@@ -128,9 +133,100 @@
           "default": "dotnet",
           "scope": "machine-overridable",
           "markdownDescription": "%config.dotnetPath%"
+        },
+        "aftershock.coverageEnabled": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "markdownDescription": "%config.coverageEnabled%"
+        },
+        "aftershock.targetBranch": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "markdownDescription": "%config.targetBranch%"
+        },
+        "aftershock.coverageThreshold": {
+          "type": "number",
+          "default": 85,
+          "minimum": 0,
+          "maximum": 100,
+          "scope": "resource",
+          "markdownDescription": "%config.coverageThreshold%"
+        },
+        "aftershock.coverageTool": {
+          "type": "string",
+          "enum": [
+            "coverlet",
+            "microsoft"
+          ],
+          "markdownEnumDescriptions": [
+            "%config.coverageTool.coverlet%",
+            "%config.coverageTool.microsoft%"
+          ],
+          "default": "coverlet",
+          "scope": "resource",
+          "markdownDescription": "%config.coverageTool%"
+        },
+        "aftershock.coverageExclusions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "resource",
+          "markdownDescription": "%config.coverageExclusions%"
+        },
+        "aftershock.coverageDecorations": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "markdownDescription": "%config.coverageDecorations%"
         }
       }
-    }
+    },
+    "colors": [
+      {
+        "id": "aftershock.uncoveredLineBackground",
+        "description": "%color.uncoveredLineBackground%",
+        "defaults": {
+          "dark": "#f14c4c1f",
+          "light": "#e5140014",
+          "highContrast": "#f14c4c33",
+          "highContrastLight": "#e5140026"
+        }
+      },
+      {
+        "id": "aftershock.partialLineBackground",
+        "description": "%color.partialLineBackground%",
+        "defaults": {
+          "dark": "#cca7001f",
+          "light": "#bf880314",
+          "highContrast": "#cca70033",
+          "highContrastLight": "#bf880326"
+        }
+      },
+      {
+        "id": "aftershock.uncoveredLineRuler",
+        "description": "%color.uncoveredLineRuler%",
+        "defaults": {
+          "dark": "#f14c4c",
+          "light": "#e51400",
+          "highContrast": "#f14c4c",
+          "highContrastLight": "#e51400"
+        }
+      },
+      {
+        "id": "aftershock.partialLineRuler",
+        "description": "%color.partialLineRuler%",
+        "defaults": {
+          "dark": "#cca700",
+          "light": "#bf8803",
+          "highContrast": "#cca700",
+          "highContrastLight": "#bf8803"
+        }
+      }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run build:prod && npm run bundle-analyzer",

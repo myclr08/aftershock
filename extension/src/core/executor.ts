@@ -33,6 +33,8 @@ export interface TestRunContext {
   runnerMode: RunnerMode;
   resultsDirectory: string;
   batch: number;
+  /** MSBuild properties read for the runner mode (ProjectAssetsFile, ...), when known. */
+  properties?: ProjectProperties;
 }
 
 /**
@@ -40,6 +42,8 @@ export interface TestRunContext {
  * each project; later: Test Explorer updates).
  */
 export interface RunHooks {
+  /** Before the first restore/build of a run. */
+  beforeRun?(plans: readonly ProjectPlan[]): void | Promise<void>;
   /** Extra `dotnet test` arguments; in bridge and MTP modes they are passed to the test application. */
   testArguments?(context: TestRunContext): string[];
   afterProject?(outcome: ProjectOutcome, context: { resultsDirectories: string[] }): void | Promise<void>;
@@ -113,6 +117,13 @@ export class PlanExecutor {
     const runDirectory = this.createRunDirectory();
     const settings = this.deps.settings();
     const log = this.deps.logger;
+    for (const hook of this.deps.hooks ?? []) {
+      try {
+        await hook.beforeRun?.(plans);
+      } catch (error) {
+        log.warn(`beforeRun hook failed: ${(error as Error).message}`);
+      }
+    }
 
     // 1. Restore (when needed) and build, one project after the other: test projects share their
     //    dependencies, and parallel builds would race on the same obj/ folders.
@@ -356,7 +367,7 @@ export class PlanExecutor {
       fs.mkdirSync(resultsDirectory, { recursive: true });
       resultsDirectories.push(resultsDirectory);
       const trxName = `${safeName(plan.name)}-${b + 1}.trx`;
-      const context: TestRunContext = { project: plan, runnerMode: mode, resultsDirectory, batch: b + 1 };
+      const context: TestRunContext = { project: plan, runnerMode: mode, resultsDirectory, batch: b + 1, properties };
       const extra = (this.deps.hooks ?? []).flatMap((hook) => hook.testArguments?.(context) ?? []);
       const selection = batches[b] ?? [];
       const reportArgs = style === 'xunit' ? ['--report-xunit-trx', '--report-xunit-trx-filename', trxName] : ['--report-trx', '--report-trx-filename', trxName];

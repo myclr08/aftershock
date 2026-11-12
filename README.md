@@ -4,8 +4,8 @@
 Sonar C# rules shown live in VS Code.**
 
 > **Status: under development.** Nothing is published to the Marketplace yet. The analyzer (CLI and
-> server mode) and the extension's core loop (save, analyze, build, run the impacted tests) work; the
-> VSIX can be built from source. See [Roadmap](#roadmap).
+> server mode), the extension's core loop (save, analyze, build, run the impacted tests) and new-code
+> coverage work; the VSIX can be built from source. See [Roadmap](#roadmap).
 
 ## Why
 
@@ -72,12 +72,19 @@ CI also attaches a VSIX to every run of the `Extension` job (artifact `vsix-*`).
 restricted marketplace access, install it with **Extensions: Install from VSIX...**.
 
 Open a folder that contains your solution and save a C# file. The status bar shows the steps
-(`Analyzing…`, `Building…`, `Testing (5)…`, then `✓ 5/5` or `✗ 1 failed`); click it for the output
-channel with the selected tests, their reason chains and the exact `dotnet` commands. Failed tests
-appear in the Problems panel at their declaration. Commands: `Aftershock: Run All Tests`,
-`Aftershock: Show Impacted Tests (Why?)`, `Aftershock: Pause / Resume`,
-`Aftershock: Restart Analyzer`, `Aftershock: Show Output`. Details:
-[extension/README.md](extension/README.md).
+(`Analyzing…`, `Building…`, `Testing (5)…`, then `✓ 5/5 · New code 87% (target 85%)` or `✗ 1 failed`);
+click it for the output channel with the selected tests, their reason chains, the exact `dotnet`
+commands and the coverage of every file with new code. Failed tests appear in the Problems panel at
+their declaration; new lines that no test covers are marked red in the editor, lines with uncovered
+conditions yellow. Commands: `Aftershock: Run All Tests`, `Aftershock: Show Impacted Tests (Why?)`,
+`Aftershock: Recompute New-Code Coverage`, `Aftershock: Pause / Resume`, `Aftershock: Restart Analyzer`,
+`Aftershock: Show Output`. Details: [extension/README.md](extension/README.md).
+
+New-code coverage needs a coverage package in the test projects: `coverlet.collector` (in the
+`dotnet new` test templates) for the default `coverlet` tool on VSTest, or set
+`aftershock.coverageTool` to `microsoft` (built into `Microsoft.NET.Test.Sdk`). Projects on
+Microsoft.Testing.Platform need `coverlet.MTP` or `Microsoft.Testing.Extensions.CodeCoverage`.
+Aftershock tells you in the output when a package is missing.
 
 Run the solution's `dotnet restore` once before the first save (the analyzer needs restored
 projects); afterwards Aftershock restores test projects itself when their project files change.
@@ -99,15 +106,24 @@ without a bundle it uses the analyzer from `analyzer/.../bin/{Release,Debug}`.
 
 ## Settings
 
-Available now: `aftershock.solution`, `aftershock.debounceMs`, `aftershock.maxImpactedSymbols`,
+Available now (details in [extension/README.md](extension/README.md#settings)):
+`aftershock.solution`, `aftershock.debounceMs`, `aftershock.maxImpactedSymbols`,
 `aftershock.fallbackGlobs`, `aftershock.testFilter`, `aftershock.disableAnalyzersInBuild`,
-`aftershock.dotnetPath` (see [extension/README.md](extension/README.md#settings)). Planned:
+`aftershock.dotnetPath`, and for new-code coverage:
 
 | Setting | Default | |
 |---|---|---|
-| `aftershock.targetBranch` | auto | Branch that defines "new code" |
-| `aftershock.coverageThreshold` | 85 | Coverage target when the server value is not available |
+| `aftershock.targetBranch` | auto | Branch that defines "new code" (`origin/HEAD`, `origin/main`, `origin/master`, `origin/develop`) |
+| `aftershock.coverageThreshold` | 85 | Coverage target; the SonarQube gate's value will take precedence once Sonar is connected |
+| `aftershock.coverageEnabled` | true | Collect coverage and show new-code coverage |
 | `aftershock.coverageTool` | `coverlet` | `coverlet` or `microsoft`; use the same tool as your pipeline |
+| `aftershock.coverageExclusions` | `[]` | Globs of files that do not count (keep in sync with `sonar.coverage.exclusions`) |
+| `aftershock.coverageDecorations` | true | Mark uncovered and partly covered new lines in the editor |
+
+Planned:
+
+| Setting | Default | |
+|---|---|---|
 | `aftershock.sonar.serverUrl` | `""` | Your SonarQube server; empty turns Sonar features off |
 | `aftershock.sonar.showAllIssues` | false | Show all issues in the file, not only new code |
 
@@ -127,6 +143,10 @@ in settings files.
   server is the definitive result.
 - **Coverage tools count branches differently.** Pick the same coverage tool your Sonar
   pipeline uses, or numbers will drift.
+- **New-code coverage is computed from the tests that ran.** A file's numbers are complete after it
+  is saved (all tests that reach its new code run) or after `Aftershock: Recompute New-Code Coverage`;
+  files only touched by other runs are marked as not measured yet. Details in
+  [docs/DESIGN.md](docs/DESIGN.md#74-keeping-partial-runs-consistent).
 
 ## Roadmap
 
@@ -134,7 +154,7 @@ in settings files.
 - [x] **M1** Analyzer CLI: impacted tests with reason chains as JSON
 - [x] **M2** Analyzer server mode: warm workspace, incremental updates
 - [x] **M3** Extension core loop: save, analyze, build, run filtered tests, report
-- [ ] **M4** New-code coverage with the Sonar formula and editor decorations
+- [x] **M4** New-code coverage with the Sonar formula and editor decorations
 - [ ] **M5** SonarQube connection and local Sonar C# rules on new code
 - [ ] **M6** Polish: "Why?" view, Test Explorer integration, Marketplace release
 

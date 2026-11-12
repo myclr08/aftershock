@@ -3,6 +3,7 @@ import type { ImpactReport, ImpactTest, WorkspaceTestProject } from '../../src/c
 import type { ExecutorProgress, ProjectOutcome, RunOutcome } from '../../src/core/executor';
 import { RpcError } from '../../src/core/jsonRpc';
 import { MemoryLogger } from '../../src/core/logger';
+import type { CoverageParticipant } from '../../src/core/coverage';
 import { Orchestrator, type ImpactSource, type OrchestratorStatus, type PlanRunner } from '../../src/core/orchestrator';
 import type { TestMethodResult } from '../../src/core/trx';
 import { MemoryStateStore, type ProjectPlan } from '../../src/core/work';
@@ -120,12 +121,12 @@ class FakeExecutor implements PlanRunner {
 
 const orchestrators: Orchestrator[] = [];
 
-function setup(state = new MemoryStateStore()) {
+function setup(state = new MemoryStateStore(), coverage?: CoverageParticipant) {
   const analyzer = new FakeAnalyzer();
   const executor = new FakeExecutor();
   const logger = new MemoryLogger();
   const statuses: OrchestratorStatus[] = [];
-  const orchestrator = new Orchestrator({ analyzer, executor, state, logger, debounceMs: () => 30 });
+  const orchestrator = new Orchestrator({ analyzer, executor, state, logger, debounceMs: () => 30, coverage });
   orchestrator.onStatus((s) => statuses.push(s));
   orchestrators.push(orchestrator);
   return { analyzer, executor, logger, orchestrator, state, statuses };
@@ -415,5 +416,95 @@ describe('Orchestrator', () => {
     await until(() => orchestrator.status.phase === 'error');
     expect(orchestrator.status.message).toContain('could not load');
     expect(executor.calls).toHaveLength(0);
+  });
+});
+
+/** Coverage participant that answers from queues (DESIGN.md 7.4 integration). */
+class FakeCoverage implements CoverageParticipant {
+  readonly saved: (readonly string[])[] = [];
+  forSaved: ImpactReport | undefined;
+  forSavedError: Error | undefined;
+  followUps: ImpactReport[] = [];
+
+  async impactForSaved(files: readonly string[]): Promise<ImpactReport | undefined> {
+    this.saved.push(files);
+    if (this.forSavedError) {
+      throw this.forSavedError;
+    }
+    return this.forSaved;
+  }
+
+  takeFollowUp(): (() => Promise<ImpactReport | undefined>) | undefined {
+    const next = this.followUps.shift();
+    return next ? async () => next : undefined;
+  }
+}
+
+describe('Orchestrator with coverage', () => {
+  it('adds the tests of every new member of the saved file (impactSinceBase) to the save\'s own selection', async () => {
+    const coverage = new FakeCoverage();
+    coverage.forSaved = report([test('ATests.OldMemberOfTheFile'), test('ATests.LatestEdit')]);
+    const { analyzer, executor, orchestrator, logger } = setup(new MemoryStateStore(), coverage);
+    analyzer.auto = () => report([test('ATests.LatestEdit')]);
+    orchestrator.onSaved(['/repo/src/A.cs']);
+    await until(() => executor.calls.length === 1);
+    await orchestrator.whenIdle();
+    expect(coverage.saved).toEqual([['/repo/src/A.cs']]);
+    expect(fqns(executor.calls[0])).toEqual(['App.Tests.ATests.LatestEdit', 'App.Tests.ATests.OldMemberOfTheFile']);
+    expect(logger.lines.some((l) => l.includes('All new code (coverage) of A.cs: 2 test(s)'))).toBe(true);
+  });
+
+  it('a comment-only edit selects nothing by itself, but the file\'s coverage is still recomputed', async () => {
+    const coverage = new FakeCoverage();
+    coverage.forSaved = report([test('ATests.One')]);
+    const { analyzer, executor, orchestrator } = setup(new MemoryStateStore(), coverage);
+    analyzer.auto = () => report([], { changedFiles: [] });
+    orchestrator.onSaved(['/repo/src/A.cs']);
+    await until(() => executor.calls.length === 1);
+    expect(fqns(executor.calls[0])).toEqual(['App.Tests.ATests.One']);
+  });
+
+  it('a failing coverage analysis is a warning; the save\'s own selection still runs', async () => {
+    const coverage = new FakeCoverage();
+    coverage.forSavedError = new Error('no merge base');
+    const { analyzer, executor, orchestrator, logger } = setup(new MemoryStateStore(), coverage);
+    analyzer.auto = () => report([test('ATests.One')]);
+    orchestrator.onSaved(['/repo/src/A.cs']);
+    await until(() => executor.calls.length === 1);
+    await orchestrator.whenIdle();
+    expect(fqns(executor.calls[0])).toEqual(['App.Tests.ATests.One']);
+    expect(logger.lines.some((l) => l.startsWith('[warn] New-code coverage: analyzing all new code of A.cs failed (no merge base)'))).toBe(true);
+    expect(orchestrator.status.phase).toBe('done');
+  });
+
+  it('a follow-up runs after the run was applied, so tests that just ran are not dropped from it', async () => {
+    const coverage = new FakeCoverage();
+    const { analyzer, executor, orchestrator } = setup(new MemoryStateStore(), coverage);
+    analyzer.auto = () => report([test('ATests.NewTest')]);
+    // The follow-up repeats NewTest (it just ran) together with the file's other test.
+    coverage.followUps.push(report([test('ATests.NewTest'), test('ATests.OldTest')]));
+    orchestrator.onSaved(['/repo/tests/ATests.cs']);
+    await until(() => executor.calls.length === 2);
+    await orchestrator.whenIdle();
+    expect(fqns(executor.calls[0])).toEqual(['App.Tests.ATests.NewTest']);
+    expect(fqns(executor.calls[1])).toEqual(['App.Tests.ATests.NewTest', 'App.Tests.ATests.OldTest']);
+    expect(orchestrator.isBusy).toBe(false);
+  });
+
+  it('enqueue: Recompute adds its selection and runs it; nothing to add resolves false', async () => {
+    const { executor, orchestrator, statuses } = setup();
+    expect(await orchestrator.enqueue('Recompute', async () => report([test('ATests.One'), test('BTests.Two')]), { showAnalyzing: true })).toBe(true);
+    expect(statuses.some((s) => s.phase === 'analyzing')).toBe(true);
+    await until(() => executor.calls.length === 1);
+    await orchestrator.whenIdle();
+    expect(fqns(executor.calls[0])).toEqual(['App.Tests.ATests.One', 'App.Tests.BTests.Two']);
+    expect(await orchestrator.enqueue('Recompute', async () => undefined)).toBe(false);
+    expect(await orchestrator.enqueue('Recompute', async () => report([], { changedFiles: [] }))).toBe(false);
+    expect(await orchestrator.enqueue('Recompute', async () => {
+      throw new Error('boom');
+    })).toBe(false);
+    await orchestrator.whenIdle();
+    expect(executor.calls).toHaveLength(1);
+    expect(orchestrator.status.phase).toBe('done');
   });
 });

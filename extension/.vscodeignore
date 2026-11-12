@@ -2,6 +2,7 @@
 **
 !dist/extension.js
 !dist/analyzer/**
+!media/**
 !l10n/**
 !package.json
 !package.nls.json

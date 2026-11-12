@@ -1,5 +1,6 @@
 import * as path from 'path';
 import type { ImpactReport, WorkspaceTestProject } from './analyzerProtocol';
+import type { CoverageParticipant } from './coverage';
 import type { ExecutorProgress, ProjectOutcome, RunOutcome } from './executor';
 import { RpcError } from './jsonRpc';
 import { formatDuration, type Logger } from './logger';
@@ -66,6 +67,8 @@ export interface OrchestratorDependencies {
   state: StateStore;
   logger: Logger;
   debounceMs: () => number;
+  /** New-code coverage (M4): extra selections for saved files and follow-ups after runs. */
+  coverage?: CoverageParticipant;
   now?: () => number;
 }
 
@@ -215,6 +218,44 @@ export class Orchestrator {
     }
   }
 
+  /**
+   * Adds the result of an extra analysis (coverage follow-up, Recompute New-Code Coverage) to the pending
+   * work and runs it. Resolves to whether anything was added.
+   */
+  enqueue(label: string, producer: () => Promise<ImpactReport | undefined>, options: { showAnalyzing?: boolean } = {}): Promise<boolean> {
+    if (this.disposed) {
+      return Promise.resolve(false);
+    }
+    this.analysesInFlight++;
+    if (options.showAnalyzing) {
+      this.setStatus({ phase: 'analyzing' });
+    }
+    return (async () => {
+      let added = false;
+      const started = this.now();
+      try {
+        const report = await producer();
+        if (report && !isNoOp(report)) {
+          this.cycleStartedAt ??= started;
+          this.logReport(report, [], this.now() - started, label);
+          this.work.mergeReport(report);
+          this.workGeneration++;
+          await this.persist();
+          added = true;
+        } else if (report) {
+          this.deps.logger.info(`${label}: no tests to run.`);
+        }
+      } catch (error) {
+        const message = (error as Error).message ?? String(error);
+        this.deps.logger.warn(`${label} failed: ${message}`);
+      } finally {
+        this.analysesInFlight--;
+        this.maybeStartRun();
+      }
+      return added;
+    })();
+  }
+
   /** Resolves when the current debounce, analyses and job have finished (tests, e2e). */
   async whenIdle(): Promise<void> {
     while (this.isBusy) {
@@ -314,8 +355,39 @@ export class Orchestrator {
         }
       }
     }
+    await this.coverageForSaved(files);
     this.analysesInFlight--;
     this.maybeStartRun();
+  }
+
+  /**
+   * With coverage on, the run must include the tests of every member of the saved files that is new
+   * relative to the target branch, not only of the latest edit (DESIGN.md 7.4).
+   */
+  private async coverageForSaved(files: readonly string[]): Promise<void> {
+    const coverage = this.deps.coverage;
+    if (!coverage || this.disposed) {
+      return;
+    }
+    const started = this.now();
+    try {
+      const report = await coverage.impactForSaved(files);
+      if (report && !isNoOp(report)) {
+        this.logReport(report, files, this.now() - started, 'All new code (coverage) of');
+        this.work.mergeReport(report);
+        this.workGeneration++;
+        await this.persist();
+      }
+    } catch (error) {
+      if (error instanceof RpcError && error.isCancellation) {
+        this.deps.logger.debug(`Coverage analysis ${error.cancelReason ?? 'cancelled'}.`);
+        return;
+      }
+      const message = (error as Error).message ?? String(error);
+      this.deps.logger.warn(
+        `New-code coverage: analyzing all new code of ${files.map((f) => path.basename(f)).join(', ')} failed (${message}); their coverage stays unknown until they are saved again or recomputed.`,
+      );
+    }
   }
 
   private maybeStartRun(): void {
@@ -372,6 +444,11 @@ export class Orchestrator {
         return;
       }
       await this.apply(outcome);
+      const followUp = this.deps.coverage?.takeFollowUp();
+      if (followUp && !this.disposed) {
+        // Counted as an analysis in flight right away, so the run does not look finished meanwhile.
+        void this.enqueue('Coverage follow-up', followUp);
+      }
     })()
       .catch((error: Error) => {
         this.fail(`The run failed: ${error.message}`);
@@ -508,13 +585,13 @@ export class Orchestrator {
     }
   }
 
-  private logReport(report: ImpactReport, files: readonly string[], elapsedMs: number): void {
+  private logReport(report: ImpactReport, files: readonly string[], elapsedMs: number, label = 'Impact of'): void {
     const log = this.deps.logger;
     const changed = report.changedFiles.filter((f) => f.analysis !== 'ignored');
     const names = files.map((f) => path.basename(f)).join(', ');
     const total = report.durationsMs?.total;
     log.info(
-      `Impact of ${names}: ${report.tests.length} test(s), ${changed.length} changed file(s)` +
+      `${label}${names ? ` ${names}` : ''}: ${report.tests.length} test(s), ${changed.length} changed file(s)` +
         `${report.fallback ? `, fallback for ${report.fallback.testProjects.length} project(s)` : ''} ` +
         `(analysis ${formatDuration(total ?? elapsedMs)}${total !== undefined ? `, round trip ${formatDuration(elapsedMs)}` : ''}).`,
     );

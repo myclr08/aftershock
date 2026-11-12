@@ -169,6 +169,23 @@ export class AnalyzerHost {
     return report;
   }
 
+  /**
+   * Base mode (`impactSinceBase`): the tests of the files' changes against `base` (the merge base of HEAD
+   * and `base` unless `mergeBase` is false). Never supersedes other requests: the coverage asks for
+   * different files in overlapping requests.
+   */
+  async impactSinceBase(base: string, files: readonly string[], options: { mergeBase?: boolean } = {}): Promise<ImpactReport> {
+    await this.whenReady();
+    const connection = this.connection;
+    if (!connection) {
+      throw new AnalyzerUnavailableError('the analyzer is not running');
+    }
+    if (this.initializeResult && this.initializeResult.capabilities?.impactSinceBase === false) {
+      throw new AnalyzerUnavailableError('the analyzer cannot compare with a git base here (the solution is not in a git work tree)');
+    }
+    return connection.request<ImpactReport>('impactSinceBase', { base, files, mergeBase: options.mergeBase ?? true, supersede: false }).result;
+  }
+
   async reload(): Promise<ReloadResult> {
     await this.whenReady();
     const connection = this.connection;

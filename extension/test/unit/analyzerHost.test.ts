@@ -146,4 +146,14 @@ describe('AnalyzerHost', () => {
     await expect(analyzer.whenReady()).rejects.toThrow(/not found/);
     expect(analyzer.state).toBe('failed');
   });
+
+  it('impactSinceBase sends the base, the files and never supersedes', async () => {
+    const { analyzer } = host({ FAKE_MODE: 'normal' });
+    analyzer.start();
+    const report = (await analyzer.impactSinceBase('0123abcd', ['/repo/src/A.cs'], { mergeBase: false })) as unknown as { received: Record<string, unknown>; tests: unknown[] };
+    expect(report.received).toEqual({ base: '0123abcd', files: ['/repo/src/A.cs'], mergeBase: false, supersede: false });
+    expect(report.tests).toHaveLength(1);
+    const defaults = (await analyzer.impactSinceBase('origin/main', [])) as unknown as { received: Record<string, unknown> };
+    expect(defaults.received.mergeBase).toBe(true);
+  });
 });

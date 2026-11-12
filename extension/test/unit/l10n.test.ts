@@ -43,14 +43,41 @@ describe('localization', () => {
     expect(Object.keys(english).filter((key) => !used.includes(key))).toEqual([]);
   });
 
-  it('contributes the M3 settings and commands', () => {
-    const manifest = read('package.json') as { contributes: { configuration: { properties: Record<string, unknown> }; commands: { command: string }[] }; activationEvents: string[] };
+  it('contributes the M3 and M4 settings, commands and colors', () => {
+    const manifest = read('package.json') as {
+      contributes: { configuration: { properties: Record<string, unknown> }; commands: { command: string }[]; colors: { id: string; defaults: Record<string, string> }[] };
+      activationEvents: string[];
+    };
     expect(Object.keys(manifest.contributes.configuration.properties).sort()).toEqual(
-      ['aftershock.debounceMs', 'aftershock.disableAnalyzersInBuild', 'aftershock.dotnetPath', 'aftershock.fallbackGlobs', 'aftershock.maxImpactedSymbols', 'aftershock.solution', 'aftershock.testFilter'].sort(),
+      [
+        'aftershock.debounceMs',
+        'aftershock.disableAnalyzersInBuild',
+        'aftershock.dotnetPath',
+        'aftershock.fallbackGlobs',
+        'aftershock.maxImpactedSymbols',
+        'aftershock.solution',
+        'aftershock.testFilter',
+        'aftershock.targetBranch',
+        'aftershock.coverageThreshold',
+        'aftershock.coverageEnabled',
+        'aftershock.coverageTool',
+        'aftershock.coverageExclusions',
+        'aftershock.coverageDecorations',
+      ].sort(),
     );
     expect(manifest.contributes.commands.map((c) => c.command).sort()).toEqual(
-      ['aftershock.restartAnalyzer', 'aftershock.runAllTests', 'aftershock.showImpactedTests', 'aftershock.showOutput', 'aftershock.togglePause'].sort(),
+      ['aftershock.recomputeCoverage', 'aftershock.restartAnalyzer', 'aftershock.runAllTests', 'aftershock.showImpactedTests', 'aftershock.showOutput', 'aftershock.togglePause'].sort(),
     );
+    // Every color the decorations use is contributed, for light, dark and both high-contrast themes.
+    const decorations = fs.readFileSync(path.join(root, 'src', 'vscode', 'coverageDecorations.ts'), 'utf8');
+    const used = [...decorations.matchAll(/ThemeColor\('([^']+)'\)/g)].map((m) => m[1]).sort();
+    expect(manifest.contributes.colors.map((c) => c.id).sort()).toEqual(used);
+    for (const color of manifest.contributes.colors) {
+      expect(Object.keys(color.defaults).sort(), color.id).toEqual(['dark', 'highContrast', 'highContrastLight', 'light']);
+    }
+    for (const icon of decorations.matchAll(/icon\('([^']+)'\)/g)) {
+      expect(fs.existsSync(path.join(root, 'media', `coverage-${icon[1]}.svg`)), icon[1]).toBe(true);
+    }
     expect(manifest.activationEvents).toEqual(['workspaceContains:**/*.sln', 'workspaceContains:**/*.slnx', 'workspaceContains:**/*.csproj']);
   });
 });

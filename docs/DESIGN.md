@@ -154,8 +154,10 @@ Priorities:
   orchestrator, planner, filter builder, restore check, runner-mode detection, TRX parser, process
   runner, test locator) does not import `vscode` (enforced by ESLint) and is unit-tested in plain
   Node; `src/extension.ts` and `src/vscode/*` are a thin layer for the status bar, Problems panel,
-  commands and settings. The run pipeline has hooks for M4/M6 (`testArguments` for `--collect`,
-  `afterProject` with the results folders, `afterRun`).
+  commands and settings. The run pipeline has hooks (`beforeRun`, `testArguments` for the coverage
+  arguments, `afterProject` with the results folders, `afterRun`); M4's `CoverageManager` implements
+  them, and the orchestrator asks it for the extra `impactSinceBase` selection of saved files and for
+  follow-up runs (7.4). Coverage colors, gutter icons and decorations live in `src/vscode`.
 - All UI strings are English, with a Turkish localization: `package.nls.json` /
   `package.nls.tr.json` for contributions and `vscode.l10n` bundles (`l10n/bundle.l10n.tr.json`)
   for runtime strings. The output channel is a technical log and stays English.
@@ -536,24 +538,69 @@ other selected tests count as passed when the exit code is 0 or 2.
 
 ## 7. New-code coverage
 
+Implemented in M4 (`extension/src/core/newCode.ts`, `cobertura.ts`, `coverageMetrics.ts`,
+`coverageStore.ts`, `coverageCollection.ts`, `coverage.ts`). With `aftershock.coverageEnabled` off,
+nothing of this section runs: no coverage arguments, no extra analysis, no decorations.
+
 ### 7.1 What is "new code"
 
 - Target branch: `aftershock.targetBranch`; if empty, `origin/HEAD`, then `origin/main`,
-  `origin/master`, `origin/develop`.
-- `git merge-base HEAD <target>` gives the base commit. `git diff -U0 --no-color <merge-base>`
-  gives added and modified lines in the working tree. Untracked files count as entirely new.
-- Excluded: test projects, files matching `aftershock.coverageExclusions`, and the server's
-  `sonar.coverage.exclusions` / `sonar.exclusions` (section 8.1).
+  `origin/master`, `origin/develop` (the first that resolves to a commit). A configured branch that does
+  not resolve is an error (no silent fallback); so is a repository without any of the automatic ones.
+- `git merge-base HEAD <target>` gives the base commit. `git diff -U0 --no-color <merge-base> -- '*.cs'`
+  gives added and modified lines in the working tree (committed, staged and unstaged). Untracked files
+  (`git ls-files --others --exclude-standard`) count as entirely new.
+- The diff runs with `--no-ext-diff --no-textconv --find-renames --ignore-submodules
+  --src-prefix=a/ --dst-prefix=b/ -c core.quotePath=false` and `GIT_OPTIONAL_LOCKS=0`, so user
+  configuration cannot change its shape and it never takes the index lock. Hunks are consumed by their
+  line counts (a content line that looks like `+++ b/x` is never a header); pure deletions, deleted and
+  binary files, mode changes and pure renames add no lines; a renamed and edited file contributes its
+  changed lines under the new name (like Sonar, whose git integration detects renames). Quoted paths and
+  the tab git appends to names with spaces are handled; CRLF does not change line numbers.
+- The repository root comes from `git rev-parse --show-cdup` (not `--show-toplevel`, which resolves
+  symbolic links), so paths match the ones VS Code, MSBuild and the compiler use.
+- Excluded: files in test projects (folders of the analyzer's test projects), `bin/` and `obj/`, files
+  matching `aftershock.coverageExclusions` (Ant-style globs against the repository- and the
+  solution-relative path; a pattern without `/` matches the file name at any depth), and from M5a the
+  server's `sonar.coverage.exclusions` / `sonar.exclusions`. The threshold and the exclusions come from
+  one provider (`CoveragePolicy`) that reports where each value came from, so the server values can
+  take precedence without touching the rest.
+- Recomputed (cheap: a handful of git calls, about 15 ms on the sample) on every save, before and after each
+  run, when `.git/HEAD` or a ref changes (a file watcher on the git directory, worktrees included),
+  when the window regains focus (branch switches in a terminal), and when a coverage setting changes.
 
 ### 7.2 Collecting coverage
 
-- Default: coverlet collector, `--collect "XPlat Code Coverage"`, Cobertura output.
-- Alternative: Microsoft Code Coverage, `--collect "Code Coverage;Format=cobertura"`. In MTP
-  mode: `Microsoft.Testing.Extensions.CodeCoverage` with
-  `--coverage --coverage-output-format cobertura`.
-- Tools count branches differently, so the tool must match the one in the team's Sonar
-  pipeline (`aftershock.coverageTool`). The M0 script reports which collector the pipeline
-  uses.
+| Tool (`aftershock.coverageTool`) | VSTest | VSTest bridge / Microsoft.Testing.Platform |
+|---|---|---|
+| `coverlet` (default) | `--collect "XPlat Code Coverage;Format=cobertura"`, needs `coverlet.collector` | `--coverlet --coverlet-output-format cobertura`, needs `coverlet.MTP` |
+| `microsoft` | `--collect "Code Coverage;Format=cobertura"`, needs `Microsoft.CodeCoverage` (comes with `Microsoft.NET.Test.Sdk`) | `--coverage --coverage-output-format cobertura`, needs `Microsoft.Testing.Extensions.CodeCoverage` |
+
+- The arguments are added by the executor's `testArguments` hook (after `--` in bridge mode). Before
+  adding them, the project's `project.assets.json` (`ProjectAssetsFile` when MSBuild reported one) is
+  checked for the package. When it is missing, no arguments are added (an unknown `--coverage` option
+  would fail the whole MTP run), the tests run normally, and the output channel and the status bar
+  tooltip say which package to add; `coverlet.collector` under Microsoft.Testing.Platform gets its own
+  explanation (a VSTest data collector does not run there). A project that ran tests with the
+  arguments but wrote no Cobertura file is reported the same way. Its files are never shown as 0%.
+- Reports land in the run's results folder (`results/run-<time>-.../<project>-<batch>`, unique per run,
+  below the extension's workspace storage). Every `*.xml` with a `<coverage>` root is read; identical
+  files (the TRX logger keeps a copy of each attachment) are read once.
+- Tools count branches differently (Microsoft Code Coverage counts the compiler's lambda-cache null
+  check as two conditions, coverlet does not), so the tool must match the one in the team's Sonar
+  pipeline. Note that SonarQube's C# plugin does not import Cobertura: pipelines use coverlet's OpenCover
+  format or Microsoft's XML/`.coverage`. Line and condition counts of a tool are the same in all of its
+  formats; what Cobertura lacks is *which* conditions were covered (7.4).
+- Verified on Linux (.NET SDK 10.0.108) with `samples/ImpactSample`: VSTest + coverlet.collector 6.0.4
+  (all four sample projects: xUnit v2, xUnit v3 through its VSTest adapter, NUnit, MSTest), VSTest +
+  Microsoft.CodeCoverage 17.14.1 (all four), Microsoft.Testing.Platform + Microsoft.Testing.Extensions.CodeCoverage
+  18.0.4 (xUnit v3), the VSTest bridge + the same package (xUnit v3), Microsoft.Testing.Platform +
+  coverlet.MTP 8.0.1 (xUnit v3 with `xunit.v3.mtp-v2`). Not working: the bridge with coverlet.MTP,
+  because coverlet.MTP needs Microsoft.Testing.Platform 2, which refuses the VSTest bridge under the
+  .NET 10 SDK ("Testing with VSTest target is no longer supported"); such projects belong in MTP mode.
+- Overhead measured on the sample (Run All, four projects in parallel, warm build): the test phase of
+  each project grows from 0.7-1.1 s to 1.2-1.5 s with coverlet and 1.3-1.7 s with Microsoft Code
+  Coverage, about 0.4-0.6 s per project; reading the reports takes 5-20 ms.
 
 ### 7.3 Formula
 
@@ -576,24 +623,70 @@ Coverage = (CT + CF + LC) / (2*B + EL)
 needed = ceil(t * (2*B + EL)) - (CT + CF + LC)
 ```
 
-Computed with decimal arithmetic to avoid floating-point surprises. Example: `EL = 40`,
-`LC = 30`, `2*B = 10`, `CT + CF = 6`: coverage = 36 / 50 = 72%. For an 85% gate,
-`ceil(0.85 * 50) - 36 = 43 - 36 = 7` more lines or conditions must be covered.
+Computed with exact integer arithmetic (the threshold as a decimal fraction, `BigInt`), never
+negative. Example: `EL = 40`, `LC = 30`, `2*B = 10`, `CT + CF = 6`: coverage = 36 / 50 = 72%. For an
+85% gate, `ceil(0.85 * 50) - 36 = 43 - 36 = 7` more lines or conditions must be covered. With no
+coverable new line the coverage is **n/a** (neither 0% nor 100%) and nothing is needed. The display
+has one decimal and is rounded **down** (84.96% shows as 84.9%), so a value below the gate never
+shows as the gate.
 
-The formula, the Cobertura parsing and the diff mapping get unit tests in M4.
+Parsing: lines are read per `<method>` (class-level `<lines>` repeat them; class-level lines outside
+every method are kept). A branch point is identified by its class and method, so the same source line
+in several classes or methods (lambdas, local functions, MS's lambda classes) merges as max hits and
+the sum of the conditions of *different* methods; the same method listed twice counts once. File
+names are resolved against each `<source>` until the file exists (coverlet writes the common folder of
+the instrumented files, or `/` with coverlet.MTP), absolute names are kept (Microsoft Code Coverage),
+deterministic `/_/` names fall back to the repository and solution folders. Windows paths (drive
+letters, UNC, backslashes) are joined with Windows rules regardless of the host, and paths are compared
+case-insensitively on Windows and macOS.
+
+Unit tests (`extension/test/unit/coverageMetrics.test.ts`, `cobertura.test.ts`, `newCode.test.ts`)
+cover worked examples, real `git diff -U0` output and real reports of both tools in both runner modes
+(`extension/test/fixtures/cobertura`, paths scrubbed).
 
 ### 7.4 Keeping partial runs consistent
 
-Each run executes only the selected tests, so coverage is stored **per file** and merged:
+Each run executes only the selected tests, so coverage is stored **per file** and merged
+(`coverageStore.ts`, a JSON file per solution in the extension's workspace storage, kept across
+reloads):
 
-- Saving a file invalidates its stored coverage.
-- With coverage enabled, impact analysis on save covers **all members of the saved file that
-  are new relative to the target branch**, not only the members changed since the last save.
-  The file's new-code coverage is therefore recomputed completely in every run.
-- Files that were not part of a run keep their last coverage until they change.
+- An entry holds every coverable line of the file (not only new ones, so a different target branch
+  needs no new run), the SHA-1 of the content it was measured on, and the tool. It applies only while
+  the file on disk has that content and the tool is unchanged; saving a file with a different content
+  removes it.
+- **Complete** entries come from a run that contained every test reaching the file's new code. With
+  coverage enabled, a save of a C# file with new lines (and no complete entry for its current content)
+  sends `impactSinceBase` with `base` = the merge base, `mergeBase: false` and `files: [saved files]`
+  after the `impact` request, and merges that selection into the pending work: the run includes the
+  tests of **all** members of the file that are new relative to the target, not only the latest edit.
+  The file waits as "pending" until a run in which all of those test projects ran and wrote a report;
+  its entry is then replaced from that run's reports. A run of every test project (Run All) completes
+  every file it reports. A save that changes nothing keeps the entry and asks for nothing.
+- **Other files** a run touches are merged into their entry: union of hits per line (max), and per
+  branch point the larger number of covered conditions. Files measured only by such partial runs count
+  as "not measured yet" (the status bar marks the total with `*`), because their numbers depend on
+  which tests happened to run.
+- Cobertura only says how many of a line's conditions were covered, not which. Two reports that each
+  cover one of two conditions are **ambiguous**: the union is 1 or 2. Merges take the larger count (never
+  claiming coverage that may not exist). When test code was saved since the last run and such a merge,
+  or any change of a file's new-line coverage, happens in a file with a complete entry, the file gets a
+  **follow-up**: after the run is applied, `impactSinceBase` for that file, and one more run with all of
+  its tests, which gives the exact numbers in a single report. (Within one run, reports of different
+  test projects can be ambiguous in the same way; they are counted conservatively.)
+- A file whose content changed during the run takes nothing from it (hashes before the build and after
+  the run).
 - Calculations always use the saved content on disk, never unsaved editor buffers.
-- The analyzer's `impactSinceBase` request with `files: [saved file]` and the target branch as
-  `base` returns the tests of all new members of that file (against the merge base).
+- New code that no test reaches is "unreached" until a run instruments its project; then it counts as
+  0% with its real coverable lines.
+- `Aftershock: Recompute New-Code Coverage` sends `impactSinceBase` for every new-code file and runs
+  the result; all files become complete. Before anything is stored the status shows `New code ?` with
+  this hint, never 0%.
+
+Known limits: union merges never remove coverage, so a test that was changed to cover less keeps its
+old coverage in files it no longer reaches until they are saved or recomputed; a change in one file
+that alters the paths another file's tests take shows in that file at its next save or recompute; the
+first save of a file whose new code no test reaches cannot show its coverable lines until some run
+instruments its project.
 
 ## 8. Sonar integration
 
@@ -712,9 +805,20 @@ Either way:
   background), `Build failed`, `Test run failed`, `No impacted tests`, `Waiting for debug session`,
   `Aftershock paused`, `Analyzer failed`. The tooltip has the last run (counts, save-to-result time),
   the fallback reasons and the solution.
+  M4 appends the coverage to the result (and to the idle text): `$(check) 12/12 · New code 87% (target 85%)`
+  (warning background when `needed > 0`, unless an error background is already shown),
+  `New code n/a` (no coverable new lines, or no C# change outside test projects), `New code ?`
+  (nothing measured yet, or no target branch), and a trailing `*` when some new-code files are not
+  measured completely. The tooltip adds lines and conditions (`Lines: 5/6 · Conditions: 1/2`), the
+  "N more line(s) or condition(s)" number, the target branch, the hint to run Recompute, and
+  coverage collection problems. The percentage uses the UI language's number format (Turkish:
+  `Yeni kod %87 (hedef %85)`).
 - **Output channel** ("Aftershock", a log channel whose level the user can change): duration of each
   step, selected tests with reason chains, fallback reasons, the exact `dotnet` commands, analyzer
-  and server messages; build output at debug level, analyzer stderr at trace level.
+  and server messages; build output at debug level, analyzer stderr at trace level. After each run the
+  new-code coverage: the total with lines, conditions and "N more line(s) or condition(s) to cover to
+  reach the target", then one line per file (`src/X.cs: 75% (lines 5/6; conditions 1/2; uncovered: 32;
+  partly covered: 27 (1/2))`, or why it is not measured), plus missing coverage packages.
 - **Problems panel**: failed tests as diagnostics (source `Aftershock`, code = the test's full name) on
   the test method's declaration line: the analyzer's `file`/`line`; else the declaration found in the
   file of the first stack frame; else a search of the test project's `.cs` files for the class and
@@ -722,7 +826,14 @@ Either way:
   five stack lines. The diagnostics are rebuilt from the failed-test store after every run (so they
   clear when tests pass) and restored on startup.
 - **Editor decorations**: uncovered new lines red, partially covered new lines (some conditions
-  missed) yellow, as gutter marks plus a light background. Can be turned off.
+  missed) yellow, as gutter marks (SVGs for light and dark themes) plus a light whole-line background
+  and an overview-ruler mark in theme colors (`aftershock.uncoveredLineBackground`,
+  `aftershock.partialLineBackground`, `aftershock.uncoveredLineRuler`, `aftershock.partialLineRuler`,
+  with defaults for light, dark and both high-contrast themes). Only new lines of files whose current
+  content was measured are marked; the hover says "New line not covered by any test." or "New line: 1
+  of 2 conditions covered (3 hits)." (and that the numbers come from partial runs, when they do). A
+  document with unsaved changes keeps its marks (VS Code moves them with the edits) until it is saved
+  and measured again. `aftershock.coverageDecorations` turns them off.
 - **Commands**:
   - `Aftershock: Run All Tests`
   - `Aftershock: Show Impacted Tests (Why?)`: selected tests with reason chains (M3: a Quick Pick of
@@ -744,16 +855,16 @@ Either way:
 | `aftershock.solution` | auto (first `.sln`/`.slnx` in the workspace root) | Solution to analyze |
 | `aftershock.targetBranch` | auto | Comparison branch for new code |
 | `aftershock.coverageThreshold` | 85 | New-code coverage target (%) when the server value is not available |
-| `aftershock.coverageEnabled` | true | Collect coverage |
-| `aftershock.coverageTool` | `coverlet` | `coverlet` or `microsoft` |
+| `aftershock.coverageEnabled` | true | Collect coverage (off: no coverage arguments, analysis, numbers or decorations) |
+| `aftershock.coverageTool` | `coverlet` | `coverlet` or `microsoft` (7.2) |
 | `aftershock.coverageExclusions` | `[]` | Glob list; keep in sync with the project's `sonar.coverage.exclusions` |
+| `aftershock.coverageDecorations` | true | Coverage decorations in the editor (M4; planned as `aftershock.decorations`) |
 | `aftershock.fallbackGlobs` | `["**/appsettings*.json"]` | Files that trigger a full test-project run when changed |
 | `aftershock.testFilter` | `""` | Extra filter added to every run (for example `Category!=Integration`) |
 | `aftershock.debounceMs` | 1500 | Wait after a save |
 | `aftershock.maxImpactedSymbols` | 500 | BFS limit |
 | `aftershock.disableAnalyzersInBuild` | true | Turn off Roslyn analyzers in Aftershock's builds |
 | `aftershock.dotnetPath` | `dotnet` | The `dotnet` executable for the analyzer, builds and tests (M3) |
-| `aftershock.decorations` | true | Coverage decorations in the editor |
 | `aftershock.sonar.serverUrl` | `""` | SonarQube server; empty disables Sonar features |
 | `aftershock.sonar.projectKey` | auto | Found as described in 8.1 when empty |
 | `aftershock.sonar.showAllIssues` | false | false: only issues on new code; true: all issues in the file |

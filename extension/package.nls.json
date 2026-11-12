@@ -4,6 +4,7 @@
   "virtualWorkspaces.description": "Aftershock runs dotnet on the local file system.",
   "command.runAllTests": "Run All Tests",
   "command.showImpactedTests": "Show Impacted Tests (Why?)",
+  "command.recomputeCoverage": "Recompute New-Code Coverage",
   "command.togglePause": "Pause / Resume",
   "command.restartAnalyzer": "Restart Analyzer",
   "command.showOutput": "Show Output",
@@ -13,5 +14,17 @@
   "config.fallbackGlobs": "Files whose change runs the dependent test projects completely (relative to the repository or solution folder; a pattern without `/` matches the file name anywhere). Setting a value replaces the default.",
   "config.testFilter": "Extra VSTest filter for every run, for example `Category!=Integration`. Combined with the selection as `(<selection>)&(<filter>)`. For xUnit v3 on Microsoft.Testing.Platform, simple `Trait=Value` / `Trait!=Value` terms are translated.",
   "config.disableAnalyzersInBuild": "Turn off Roslyn analyzers in Aftershock's builds (`-p:RunAnalyzers=false`) for faster feedback. Your normal builds and CI are not affected.",
-  "config.dotnetPath": "The `dotnet` executable used to run the analyzer, builds and tests."
+  "config.dotnetPath": "The `dotnet` executable used to run the analyzer, builds and tests.",
+  "config.coverageEnabled": "Collect coverage in Aftershock's test runs and show the coverage of new code (lines added or changed relative to the target branch). Off: no coverage arguments, decorations or numbers.",
+  "config.targetBranch": "Branch that defines new code: new lines are those added or changed in the working tree relative to `git merge-base HEAD <branch>`. Empty: `origin/HEAD`, then `origin/main`, `origin/master`, `origin/develop`.",
+  "config.coverageThreshold": "New-code coverage target in percent, used for the warning color and the \"N more to reach the target\" number. A threshold read from the SonarQube quality gate will take precedence once Sonar is connected.",
+  "config.coverageTool": "Coverage tool. Use the one your Sonar pipeline uses: tools count branches differently. VSTest projects need `coverlet.collector` (coverlet) or `Microsoft.NET.Test.Sdk` (microsoft); Microsoft.Testing.Platform projects need `coverlet.MTP` or `Microsoft.Testing.Extensions.CodeCoverage`.",
+  "config.coverageTool.coverlet": "coverlet: `--collect \"XPlat Code Coverage\"` (VSTest) or `--coverlet` (Microsoft.Testing.Platform), Cobertura output.",
+  "config.coverageTool.microsoft": "Microsoft Code Coverage: `--collect \"Code Coverage;Format=cobertura\"` (VSTest) or `--coverage` (Microsoft.Testing.Platform).",
+  "config.coverageExclusions": "Files that do not count for new-code coverage, as glob patterns relative to the repository or solution folder (for example `**/Migrations/**`; a pattern without `/` matches the file name anywhere). Keep it in sync with the project's `sonar.coverage.exclusions`. Test projects never count.",
+  "config.coverageDecorations": "Mark new lines in the editor: uncovered lines red, lines with uncovered conditions yellow (gutter and line background).",
+  "color.uncoveredLineBackground": "Background of new lines that no test covers (Aftershock).",
+  "color.partialLineBackground": "Background of new lines with uncovered conditions (Aftershock).",
+  "color.uncoveredLineRuler": "Overview ruler mark of new lines that no test covers (Aftershock).",
+  "color.partialLineRuler": "Overview ruler mark of new lines with uncovered conditions (Aftershock)."
 }
