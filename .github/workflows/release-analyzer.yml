@@ -1,0 +1,163 @@
+name: Release analyzer
+
+# Push a tag such as `analyzer-v0.1.0` (or `analyzer-v0.2.0-rc.1`) to publish the analyzer CLI as a
+# GitHub pre-release asset: a framework-dependent, portable (no runtime identifier) build that runs with
+# `dotnet aftershock-analyzer.dll ...` on Windows, Linux and macOS with a .NET 8 or newer SDK installed.
+
+on:
+  push:
+    tags: ['analyzer-v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-analyzer-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  DOTNET_NOLOGO: "1"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "1"
+
+jobs:
+  build:
+    name: Test and publish
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      - name: Version from tag
+        id: version
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#analyzer-v}"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Tag '$GITHUB_REF_NAME' is not analyzer-v<major>.<minor>.<patch>[-suffix]"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Test
+        run: dotnet test analyzer/Aftershock.Analyzer.sln -c Release
+
+      - name: Publish (framework-dependent, portable)
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # No -r: portable output. UseAppHost=false: no OS-specific launcher, run with `dotnet <dll>`.
+          # RollForward=LatestMajor comes from analyzer/Directory.Build.props.
+          dotnet publish analyzer/src/Aftershock.Analyzer/Aftershock.Analyzer.csproj \
+            -c Release \
+            -o "artifacts/aftershock-analyzer-$VERSION" \
+            -p:Version="$VERSION" \
+            -p:UseAppHost=false
+          test -d "artifacts/aftershock-analyzer-$VERSION/BuildHost-netcore"
+          grep -q '"rollForward": "LatestMajor"' "artifacts/aftershock-analyzer-$VERSION/aftershock-analyzer.runtimeconfig.json"
+          cd artifacts
+          zip -qr "aftershock-analyzer-$VERSION.zip" "aftershock-analyzer-$VERSION"
+          sha256sum "aftershock-analyzer-$VERSION.zip" > "aftershock-analyzer-$VERSION.zip.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: analyzer-zip
+          path: |
+            artifacts/aftershock-analyzer-${{ steps.version.outputs.version }}.zip
+            artifacts/aftershock-analyzer-${{ steps.version.outputs.version }}.zip.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  smoke-net8:
+    # The published zip must work on a machine that only has the .NET 8 SDK.
+    name: Smoke test on .NET 8 SDK only
+    needs: build
+    runs-on: ubuntu-latest
+    container: mcr.microsoft.com/dotnet/sdk:8.0
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+      MSBUILDDISABLENODEREUSE: "1"
+      DOTNET_CLI_USE_MSBUILD_SERVER: "0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: analyzer-zip
+          path: dist
+
+      - name: Run the published analyzer against samples/ImpactSample
+        shell: bash
+        run: |
+          set -euo pipefail
+          apt-get update -qq && apt-get install -y -qq unzip > /dev/null
+          dotnet --list-sdks
+          unzip -q "dist/aftershock-analyzer-$VERSION.zip" -d /tmp/analyzer
+          analyzer="/tmp/analyzer/aftershock-analyzer-$VERSION/aftershock-analyzer.dll"
+
+          work=/tmp/smoke
+          mkdir -p "$work"
+          cp -r samples/ImpactSample "$work/"
+          cd "$work"
+          printf 'bin/\nobj/\n' > .gitignore
+          git init -q -b main
+          git add -A
+          git -c user.name=ci -c user.email=ci@example.invalid commit -qm baseline
+          dotnet restore ImpactSample/ImpactSample.sln
+
+          sed -i 's/"NL" => 0.21m,/"NL" => 0.215m,/' ImpactSample/src/Sample.Core/Pricing/TaxRates.cs
+          dotnet "$analyzer" --version
+          dotnet "$analyzer" impact --solution ImpactSample/ImpactSample.sln --base main --json > report.json
+          dotnet "$analyzer" impact --solution ImpactSample/ImpactSample.sln --base main
+
+          count=$(grep -c '"fullyQualifiedName"' report.json)
+          if [ "$count" -ne 5 ]; then
+            echo "::error::expected 5 impacted tests, got $count"
+            cat report.json
+            exit 1
+          fi
+          grep -q '"fullyQualifiedName": "Sample.Tests.XUnit.TaxRatesTests.ForCountry_ReturnsRate"' report.json
+
+  release:
+    name: Create GitHub pre-release
+    needs: [build, smoke-net8]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: analyzer-zip
+          path: dist
+
+      - name: Upload to a pre-release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          files=("dist/aftershock-analyzer-$VERSION.zip" "dist/aftershock-analyzer-$VERSION.zip.sha256")
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "$tag" "${files[@]}" --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$tag" "${files[@]}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --prerelease \
+              --title "Aftershock analyzer $VERSION" \
+              --notes "Framework-dependent build of the analyzer CLI (\`net8.0\`, rolls forward to the newest installed runtime).
+          Requires a .NET 8 or newer SDK and git. Unzip, restore your solution, then run:
+
+          \`dotnet aftershock-analyzer-$VERSION/aftershock-analyzer.dll impact --solution <path.sln> --base origin/main\`
+
+          See docs/analyzer-cli.md (\"Trying the analyzer on your own solution\")."
+          fi

@@ -78,6 +78,13 @@ Priorities:
     load MSBuild types early.
   - `Microsoft.Build*` packages are referenced with `ExcludeAssets="runtime"` so the SDK's
     MSBuild is used.
+  - Target `net8.0` with `RollForward=LatestMajor`: the analyzer runs on the newest installed
+    runtime, so it can load MSBuild from the newest SDK, and still runs where only .NET 8 is
+    installed. Roslyn packages are pinned to **5.6.0**, the newest release whose
+    `Microsoft.CodeAnalysis.Workspaces.MSBuild` still ships a `net8.0` build (5.9.0 has only
+    `net10.0` and `net472`). Raise the target framework and the packages together.
+  - `MSBuildLocator` is queried with the solution folder as working directory, so a
+    `global.json` next to the solution selects the SDK.
   - Every `WorkspaceFailed` diagnostic is logged. Load failures are never swallowed. A project
     that fails to load puts every change touching it into fallback mode (section 5.5).
 - Two modes:
@@ -112,67 +119,133 @@ Priorities:
 
 ### 5.1 Changed members
 
-- Compare the saved document with its previous snapshot (line diff).
-- Map each changed line range to the **enclosing member** in the Roslyn syntax tree: method,
-  constructor, destructor, property or indexer accessor, event accessor, operator, conversion
-  operator. Local functions and lambdas map to their containing member.
-- Changes outside any member (usings, attributes on the type, field added or removed, base
-  type list, a new member, primary constructor parameters) mark **every member of that type**
-  as changed. Field initializer changes mark all constructors of the type as changed.
-- Deleted members are resolved in the **old** snapshot's compilation, and their references
-  are searched there, because the symbol no longer exists in the new one.
-- File-level changes (new file, deleted file, renamed type) are handled per type: all members
-  of new types count as changed. Deleted types use the old snapshot.
+- Compare the old snapshot of each changed document with the new one (line diff; line
+  terminators are not compared, so CRLF/LF differences are invisible).
+- Map each changed line to the **innermost member** in the Roslyn syntax tree: method,
+  constructor, destructor, property or indexer accessor (an expression-bodied property is its
+  getter), event, operator, conversion operator. Local functions and lambdas map to their
+  containing member. A property header (attributes, modifiers, type, name), its accessors and
+  its initializer are compared separately, so `{ get; set; }` -> `{ get; private set; }` is a
+  setter change only.
+- Every candidate is **confirmed** by comparing the old and new declaration with trivia
+  ignored (`SyntaxFactory.AreEquivalent`). Comment-only and whitespace-only edits, and
+  alignment artifacts of the line diff (a closing brace attributed to the neighbouring
+  member), select nothing.
+- Changes outside any member (attributes or modifiers of the type, base list, type parameters,
+  primary constructor, field declarations) mark **every member of that type** as changed,
+  including fields (a changed constant is followed to its readers) and implicit constructors.
+  File-level changes (usings, namespace, assembly attributes) do this for every type of the
+  file. A changed instance property initializer also marks the instance constructors.
+- **Added members.** In production code, adding a member marks every member of its type as
+  changed (a new overload or a hiding member can change which method existing calls bind
+  to). In types of **test projects** (test classes, base test classes, fixtures, helpers) and
+  in any type that declares or inherits test methods, this rule is not applied: a new test
+  method selects only itself, and a new helper is followed through its own references (the
+  tests that call it changed as well). If the same edit also changes something outside the
+  members (for example a field), the type-level rule applies as usual.
+- **Deleted members** are resolved in a fork of the solution in which the changed documents
+  carry their old text and deleted documents are re-added (`WithDocumentText`,
+  `AddDocument`). Their references are searched there; each caller found is mapped back to
+  the current solution by documentation comment id, and the search continues in the current
+  solution as soon as the caller still exists. A removed member does not change its type.
+- New files: every member of every declared type. Deleted files: every member, resolved in
+  the old fork.
 
 ### 5.2 Caller search (backwards BFS)
 
-- For each changed symbol, find references with `SymbolFinder.FindReferencesAsync` (and
-  `FindCallersAsync` where it is enough), then walk **up** breadth-first: the enclosing member
-  of each reference becomes the next symbol in the queue.
-- **Polymorphism**: add the interface members the symbol implements
-  (`FindImplementedInterfaceMembersAsync` / explicit implementations) and the base members it
-  overrides (`OverriddenMethod` chain) to the queue. A call through `IOrderService.Create`
-  therefore reaches tests that only know the interface. When an abstract or virtual member or
-  an interface member itself changes, implementations and overrides are added as well
-  (`FindImplementationsAsync`, `FindOverridesAsync`).
-- **Properties**: getter and setter uses both count as references. Changes in one accessor
-  follow references to the property.
-- **Constructors**: object creations, `base(...)`/`this(...)` calls and implicit calls
-  through derived constructors count.
-- Implicit calls that Roslyn reports as references (operators, conversions, `foreach`
-  `GetEnumerator`, `Deconstruct`, extension methods, attribute constructors) are followed.
-  Calls that only exist at runtime (reflection, DI-only resolution, source-generated
-  registrations that are not in the compilation) are not visible; see 5.5 and 5.7.
-- Every visited symbol keeps its predecessor so a **reason chain** can be printed, for example:
+- For each changed symbol, find references with `SymbolFinder.FindReferencesAsync` and walk
+  **up** breadth-first: the enclosing member of each reference becomes the next symbol.
+  Instance field and property initializers map to the instance constructors; references in a
+  type header (attributes, base list) map to the constructors; static initializers map to the
+  static field or property itself (the tests that read it), not to the whole class.
+- `FindReferencesAsync` cascades in both directions of the inheritance hierarchy. Only
+  references bound to the searched symbol itself are kept; the direction is controlled
+  explicitly instead:
+  - **Upwards (always):** the overridden base member and the implemented interface members
+    (`FindImplementedInterfaceMembersAsync`) are queued, so a call through
+    `IOrderService.Create` or through an abstract base reaches the tests.
+  - **Downwards (never):** when a base, virtual or interface member changes, overrides and
+    implementations are not added. Calls through derived types are bound to the base symbol
+    unless the derived type overrides it; an override that calls `base.M()` is found as a
+    reference; an override that does not call it does not run the changed code; and a changed
+    interface signature changes the implementations in the same edit. Adding the downward
+    edges would only add false positives.
+  - Members declared **outside the solution** (`object.ToString`, `IDisposable.Dispose`,
+    `IEquatable<T>.Equals`, ...) are not followed: their callers are framework code and their
+    fan-out would hit the BFS limit on every `ToString` override.
+- **Properties**: an accessor searches the property and keeps only reads (getter) or writes
+  (setter, `init`, object and `with` initializers, deconstruction targets, `out`); `+=`, `++`,
+  `??=` and `ref` count as both.
+- **Constructors**: object creations (also target-typed `new()`), `base(...)`/`this(...)`
+  calls, and derived constructors that call a parameterless base constructor implicitly
+  (Roslyn does not report those as references, so they are added explicitly). Reaching a
+  static constructor marks the static members and constructors of its type.
+- Implicit references Roslyn reports (operators, conversions, `foreach` `GetEnumerator`,
+  `Deconstruct`, extension methods, method groups, `nameof`) are followed. Calls that only
+  exist at runtime (reflection, DI-only resolution, source-generated registrations that are
+  not in the compilation) are not visible; see 5.5 and 5.7.
+- Every visited symbol keeps its predecessor, so the first path that reaches a test is its
+  **reason chain** (a shortest path), for example:
   `PremiumCalculator.Calculate <- PolicyService.Create <- PolicyServiceTests.Create_ShouldApplyDiscount`.
-- Limits: at most `aftershock.maxImpactedSymbols` symbols (default 500) and 10 s per request.
-  Hitting either limit triggers the fallback.
+- Test methods are end points: they are reported and not expanded, and they **do not count**
+  toward the symbol limit. A widely used helper therefore selects its many tests instead of
+  falling back.
+- Limits, per changed file: at most `aftershock.maxImpactedSymbols` non-test symbols
+  (default 500). Time: 10 s for the **reference search phase** of a request (all files
+  together). Compiling the changed projects and their dependents happens before, outside the
+  budget, and is logged as its own phase (it only costs time once in server mode). Hitting a
+  limit makes that file (and, for the timeout, every file not searched yet) fall back.
 
 ### 5.3 Test detection
 
 A method is a **test method** if it has one of these attributes, or an attribute that
-**derives** from one of them (custom `FactAttribute` subclasses are common):
+**derives** from one of them (custom `FactAttribute` subclasses are common). An override of a
+test method is a test too (the frameworks inherit method attributes).
 
 | Framework | Attributes |
 |---|---|
-| xUnit v2 / v3 | `[Fact]`, `[Theory]` (data from `[InlineData]`, `[MemberData]`, `[ClassData]`) |
+| xUnit v2 / v3 | `[Fact]`, `[Theory]` (data from `[InlineData]`, `[MemberData]`, `[ClassData]`, `[ClassData<T>]`) |
 | NUnit | `[Test]`, `[TestCase]`, `[TestCaseSource]`, `[Theory]` |
 | MSTest | `[TestMethod]`, `[DataTestMethod]` (with `[DataRow]` / `[DynamicData]`) |
 
-Attribute matching uses the semantic model (full type names and base types), never names
-only.
+Attributes are matched on the semantic model: the attribute class and its base types are
+compared by name (with or without the `Attribute` suffix), and the framework is taken from
+the namespace of the matched type (`Xunit*`, `NUnit.Framework`,
+`Microsoft.VisualStudio.TestTools.UnitTesting`). When the attribute type cannot be resolved
+(for example the project was not restored), the written name is used and the framework comes
+from the project's test framework reference.
 
-**Whole-class triggers.** If the BFS reaches any of these parts of a test class, **all tests
-of the class** (and of derived test classes) are impacted:
+**Inherited tests.** A test method declared in a base class (abstract or not) runs under every
+concrete derived class; it is reported once per concrete class (`Ns.Derived.Method`, the name
+the adapters use), with `declaredIn` pointing at the base.
 
-- constructors, field and property initializers, `Dispose` / `DisposeAsync`,
-- `IAsyncLifetime.InitializeAsync` / `DisposeAsync` (xUnit),
-- fixture types used via `IClassFixture<T>`, `ICollectionFixture<T>` (xUnit; for collection
-  fixtures, all classes in the `[Collection]`), xUnit v3 assembly fixtures,
+**Whole-class triggers.** If the search reaches one of these members of a test class or of a
+**base class** of test classes, all tests of the class and of every concrete derived test
+class are impacted:
+
+- constructors (also implicit ones reached through instance field/property initializers),
+- `Dispose` / `DisposeAsync`, `IAsyncLifetime.InitializeAsync` / `DisposeAsync` (Task in v2,
+  ValueTask in v3),
 - `[SetUp]`, `[TearDown]`, `[OneTimeSetUp]`, `[OneTimeTearDown]` (NUnit),
-- `[TestInitialize]`, `[TestCleanup]`, `[ClassInitialize]`, `[ClassCleanup]` (MSTest),
-- base test classes: reaching a member of an abstract base test class impacts every derived
-  test class.
+- `[TestInitialize]`, `[TestCleanup]`, `[ClassInitialize]`, `[ClassCleanup]` (MSTest).
+
+Other members of a base test class (helpers, properties) are **not** whole-class triggers:
+they are followed through their references, and the tests that use them are reported for
+every concrete derived class.
+
+**Fixtures.** Reaching a lifecycle member (constructor, `Dispose`, `InitializeAsync`, ...) of a
+type that test classes receive selects those classes completely: `IClassFixture<T>`,
+`ICollectionFixture<T>` through `[CollectionDefinition]` and `[Collection("name")]`,
+`[Collection(typeof(T))]` or `[Collection<T>]` (xUnit v3), and any other constructor-injected
+type (except `ITestOutputHelper` and other framework-provided parameters). Reaching an xUnit v3
+assembly fixture (`[assembly: AssemblyFixture(typeof(T))]`), MSTest `[AssemblyInitialize]` /
+`[AssemblyCleanup]` or an NUnit `[SetUpFixture]` runs the whole test project (fallback kind
+`assemblySetup`).
+
+**Data sources.** Data members are linked to their tests even when they are named by a
+string and no symbol reference exists: xUnit `[MemberData("X")]` (with `MemberType`),
+`[ClassData(typeof(T))]` / `[ClassData<T>]` (any member of `T`), NUnit `[TestCaseSource]`,
+`[ValueSource]`, `[TestFixtureSource]` (whole class), MSTest `[DynamicData]`.
 
 A changed symbol that is itself a test method (new or edited test) is always selected.
 
@@ -195,13 +268,24 @@ project that depends on the affected projects**. The project graph comes from
 - The BFS limit or the time limit was hit.
 - The analyzer failed, or the document is not in the workspace (for example a project failed
   to load).
+- Non-C# sources that compile into the assembly (`.razor`, `.cshtml`, `.xaml`, `.resx`, `.vb`,
+  `.fs`, ...).
+
+Build output and tool folders (`bin/`, `obj/`, `TestResults/`, `.vs/`, `.idea/`) and files that
+are neither sources nor build inputs are ignored. The full trigger table, with the scope of
+each fallback, is in [analyzer-cli.md](analyzer-cli.md#fallback-kinds).
 
 The reason is always shown in the status bar tooltip and the output channel.
 
 ### 5.6 Performance
 
-- First version: reference searches run on demand and are cached per symbol. Cache entries
-  that involve a changed document are invalidated on every update.
+- First version: reference searches run on demand and are cached per symbol
+  (`ReferenceCache`). Results are stored per document, so an update invalidates only the
+  edited document's slice of every entry (the next lookup re-searches just that document) and
+  drops entries whose symbol is declared in it.
+- Measured in M1 (Linux): the sample solution analyzes in about 0.2 s after a 1.1 s load and
+  0.8 s compile; a generated solution with 715 documents and 2,400 xUnit tests needs 0.4-1.2 s
+  of reference search for changes reaching 9-728 tests (see analyzer-cli.md).
 - The analysis time of every request is logged. If typical changes take more than 2 s on a
   real solution, build a reverse call index at startup (callee -> callers) and update it
   incrementally per document.
@@ -215,6 +299,15 @@ implementation is never referenced from test code), dynamic, `InternalsVisibleTo
 with reflection, or code generated at runtime. The fallback rules above catch the common DI
 case. "Run all tests" (command) and CI remain the safety net.
 
+Deliberate approximations of M1:
+
+- Virtual dispatch is over-approximated: a change in one override selects every test that
+  calls the base member, whatever subclass it uses at runtime.
+- Calls through members declared outside the solution are not followed (5.2).
+- Static initializers map to the static member, not to the whole class (5.2).
+- Test projects are recognized by their reference to `xunit.core`, `xunit.v3.core`,
+  `nunit.framework` or the MSTest framework assembly.
+
 ## 6. Build and test execution
 
 ### 6.1 Build
@@ -227,6 +320,18 @@ case. "Run all tests" (command) and CI remain the safety net.
   a global props/package file is newer than the last successful restore.
 - M0 measures how much a single-project incremental build costs on real solutions, with and
   without analyzers ([M0-measurement.md](M0-measurement.md)).
+
+### 6.1.1 Running `dotnet` child processes
+
+- When `dotnet build` / `dotnet test` / `dotnet restore` run with redirected output, MSBuild
+  worker nodes reused across builds (node reuse) and the MSBuild server inherit the pipes and
+  keep them open after the command itself has exited. Waiting for end-of-stream then hangs
+  forever (this hung the M1 analyzer test suite until fixed).
+- Always set `MSBUILDDISABLENODEREUSE=1` and `DOTNET_CLI_USE_MSBUILD_SERVER=0` in the child's
+  environment (or pass `-nodeReuse:false` and `--disable-build-servers`), wait for the **process
+  exit**, and then read the remaining output with a bounded wait instead of waiting for EOF.
+- Cancellation kills the whole process tree (`Process.Kill(entireProcessTree: true)` on .NET;
+  `taskkill /T /F` on Windows from Node).
 
 ### 6.2 Test runner modes
 

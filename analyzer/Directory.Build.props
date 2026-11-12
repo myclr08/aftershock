@@ -1,0 +1,16 @@
+<Project>
+  <!-- Shared settings for the analyzer projects. Deliberately does not import any parent Directory.Build.props. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>12.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!--
+      Run on the newest installed runtime: MSBuild is loaded from the newest .NET SDK, which may need a
+      newer runtime than the one the analyzer was compiled against.
+    -->
+    <RollForward>LatestMajor</RollForward>
+    <IsPackable>false</IsPackable>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+</Project>

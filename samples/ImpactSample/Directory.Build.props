@@ -1,0 +1,15 @@
+<Project>
+  <!--
+    Shared settings for the ImpactSample fixture solution.
+    The sample targets .NET 8 (the minimum supported by Aftershock). RollForward=Major lets the
+    test projects run on a newer runtime when the .NET 8 runtime is not installed.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RollForward>Major</RollForward>
+    <IsPackable>false</IsPackable>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+</Project>
