@@ -45,6 +45,10 @@ public sealed class ImpactEngine
     public async Task<ImpactResult> AnalyzeAsync(Solution solution, IReadOnlyList<FileChange> changes, ImpactOptions options, CancellationToken cancellationToken = default)
     {
         var result = new ImpactResult();
+        var searchesBefore = _cache.Searches;
+        var scopedBefore = _cache.ScopedSearches;
+        var hitsBefore = _cache.Hits;
+        options.OnPhase?.Invoke("classify");
         var model = new SolutionModel(solution);
         var testModel = new TestModel(solution, model, _log);
         var solutionDirectory = PathUtil.DirectoryOf(solution.FilePath) ?? Environment.CurrentDirectory;
@@ -155,18 +159,21 @@ public sealed class ImpactEngine
         }
 
         // 4. Compile what the search will need, in parallel, outside the search time budget.
+        options.OnPhase?.Invoke("compile");
         var compileWatch = Stopwatch.StartNew();
         var needsOld = work.Any(w => w.Pending.Any(p => p.InOld));
-        await WarmUpAsync(solution, model, work.SelectMany(w => w.NewDocuments).Select(d => d.ProjectId), cancellationToken).ConfigureAwait(false);
+        var changedDocuments = options.CompileErrors == CompileErrorCheck.ChangedDocuments ? work.SelectMany(w => w.NewDocuments).ToHashSet() : null;
+        await WarmUpAsync(solution, model, work.SelectMany(w => w.NewDocuments).Select(d => d.ProjectId), changedDocuments, cancellationToken).ConfigureAwait(false);
         if (needsOld)
         {
             var oldModel = new SolutionModel(oldSolution);
-            await WarmUpAsync(oldSolution, oldModel, work.SelectMany(w => w.OldDocuments).Select(d => d.ProjectId), cancellationToken).ConfigureAwait(false);
+            await WarmUpAsync(oldSolution, oldModel, work.SelectMany(w => w.OldDocuments).Select(d => d.ProjectId), changedDocuments is null ? null : new HashSet<DocumentId>(), cancellationToken).ConfigureAwait(false);
         }
 
         result.DurationsMs["compilation"] = compileWatch.ElapsedMilliseconds;
 
         // 5. Resolve symbols.
+        options.OnPhase?.Invoke("resolve");
         var mappingWatch = Stopwatch.StartNew();
         foreach (var item in work.Where(w => w.Failure is null))
         {
@@ -204,6 +211,7 @@ public sealed class ImpactEngine
         result.DurationsMs["memberMapping"] = (long)times.Mapping.TotalMilliseconds + mappingWatch.ElapsedMilliseconds;
 
         // 6. Caller search, one BFS per changed file, under one time budget.
+        options.OnPhase?.Invoke("search");
         var searchWatch = Stopwatch.StartNew();
         var context = new SearchContext(solution, needsOld ? oldSolution : null, _cache, new ReferenceCache(), testModel, options, _log);
         var hits = new Dictionary<string, (TestHit Hit, Project Project)>(StringComparer.Ordinal);
@@ -293,10 +301,18 @@ public sealed class ImpactEngine
 
         result.DurationsMs["referenceSearch"] = searchWatch.ElapsedMilliseconds;
         result.Stats.VisitedSymbols = visited;
-        result.Stats.ReferenceSearches = _cache.Searches + context.OldCache.Searches;
-        result.Stats.CacheHits = _cache.Hits + context.OldCache.Hits;
+        result.Stats.ReferenceSearches = _cache.Searches - searchesBefore + context.OldCache.Searches;
+        result.Stats.CacheHits = _cache.Hits - hitsBefore + context.OldCache.Hits;
+        result.Stats.ScopedSearches = _cache.ScopedSearches - scopedBefore + context.OldCache.ScopedSearches;
 
         // 7. Report.
+        options.OnPhase?.Invoke("report");
+        foreach (var hostFallback in options.HostFallbacks)
+        {
+            var projects = hostFallback.Projects.Select(solution.GetProject).OfType<Project>().ToList();
+            fallbacks.Add((new FallbackReasonReport { Kind = hostFallback.Kind, File = hostFallback.File, Message = hostFallback.Message }, projects));
+        }
+
         BuildTests(result, hits.Values, testModel);
         BuildFallback(result, fallbacks, model);
         BuildTestProjects(result, model, solution);
@@ -375,7 +391,11 @@ public sealed class ImpactEngine
         return pending;
     }
 
-    private async Task WarmUpAsync(Solution solution, SolutionModel model, IEnumerable<ProjectId> changedProjects, CancellationToken cancellationToken)
+    /// <param name="checkedDocuments">
+    /// Null: report compile errors of every affected project (binds them completely). Otherwise only the errors of
+    /// these documents are reported; the other compilations are created but not bound.
+    /// </param>
+    private async Task WarmUpAsync(Solution solution, SolutionModel model, IEnumerable<ProjectId> changedProjects, IReadOnlySet<DocumentId>? checkedDocuments, CancellationToken cancellationToken)
     {
         var projects = model.WithDependents(changedProjects.Distinct());
         await Task.WhenAll(projects.Select(async project =>
@@ -386,7 +406,24 @@ public sealed class ImpactEngine
                 return;
             }
 
-            var errors = compilation.GetDiagnostics(cancellationToken).Where(d => d.Severity == DiagnosticSeverity.Error).ToList();
+            List<Diagnostic> errors;
+            if (checkedDocuments is null)
+            {
+                errors = compilation.GetDiagnostics(cancellationToken).Where(d => d.Severity == DiagnosticSeverity.Error).ToList();
+            }
+            else
+            {
+                errors = new List<Diagnostic>();
+                foreach (var document in project.Documents.Where(d => checkedDocuments.Contains(d.Id)))
+                {
+                    var semanticModel = await document.GetSemanticModelAsync(cancellationToken).ConfigureAwait(false);
+                    if (semanticModel is not null)
+                    {
+                        errors.AddRange(semanticModel.GetDiagnostics(cancellationToken: cancellationToken).Where(d => d.Severity == DiagnosticSeverity.Error));
+                    }
+                }
+            }
+
             if (errors.Count > 0)
             {
                 _log.Warning("compilation", $"{project.Name}: {errors.Count} compile error(s); results may be incomplete. First: {errors[0]}");

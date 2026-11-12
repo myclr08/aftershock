@@ -19,9 +19,20 @@ public sealed class ImpactReport
 
     public string RepositoryRoot { get; init; } = string.Empty;
 
-    public string Base { get; init; } = string.Empty;
+    /// <summary>The git ref as given. Not present in server snapshot mode (<c>impact</c>), which compares with the last analyzed content.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Base { get; init; }
 
-    public string BaseCommit { get; init; } = string.Empty;
+    /// <summary>The commit compared with. Not present in server snapshot mode.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? BaseCommit { get; init; }
+
+    /// <summary>
+    /// Server base mode only: set to "HEAD" when <see cref="BaseCommit"/> is the merge base of HEAD and <see cref="Base"/>
+    /// rather than the commit <see cref="Base"/> points to.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? MergeBaseOf { get; init; }
 
     public Dictionary<string, long> DurationsMs { get; init; } = new();
 
@@ -182,9 +193,18 @@ public sealed class StatsReport
 {
     public int VisitedSymbols { get; set; }
 
+    /// <summary>Full reference searches (every document of the solution that can reference the symbol).</summary>
     public int ReferenceSearches { get; set; }
 
+    /// <summary>Lookups answered from the reference cache without searching.</summary>
     public int CacheHits { get; set; }
+
+    /// <summary>
+    /// Server only: cached lookups that re-searched just the documents changed since the entry was cached. Omitted
+    /// when zero (always in the one-shot CLI, whose cache starts empty).
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public int ScopedSearches { get; set; }
 }
 
 public sealed record DiagnosticReport(string Severity, string Source, string Message);

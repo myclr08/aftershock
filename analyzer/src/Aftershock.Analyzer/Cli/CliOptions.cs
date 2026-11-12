@@ -1,5 +1,6 @@
 using System.Globalization;
 using Aftershock.Analyzer.Engine;
+using Aftershock.Analyzer.Server;
 
 namespace Aftershock.Analyzer.Cli;
 
@@ -20,7 +21,11 @@ public sealed class ImpactCommandOptions
     public IReadOnlyList<string> FallbackGlobs { get; init; } = ImpactOptions.DefaultFallbackGlobs;
 }
 
-public sealed record ParseResult(ImpactCommandOptions? Options, int? ExitCode, string? Message);
+public sealed record ParseResult(ImpactCommandOptions? Options, int? ExitCode, string? Message)
+{
+    /// <summary>Set (instead of <see cref="Options"/>) for the <c>serve</c> command.</summary>
+    public ServeCommandOptions? Serve { get; init; }
+}
 
 /// <summary>Hand-written argument parser (no dependency, predictable on every platform).</summary>
 public static class CliOptions
@@ -32,9 +37,14 @@ public static class CliOptions
     public const string Usage = """
         Usage:
           aftershock-analyzer impact --solution <path.sln> --base <git-ref> [options]
+          aftershock-analyzer serve --solution <path.sln> [options]
 
-        Finds the test methods affected by the changes between <git-ref> and the working tree
+        impact: finds the test methods affected by the changes between <git-ref> and the working tree
         (staged, unstaged and untracked files).
+
+        serve: keeps the solution loaded and answers newline-delimited JSON-RPC 2.0 requests on
+        stdin/stdout (initialize, impact, impactSinceBase, reload, status, shutdown); logs go to stderr.
+        Accepts --max-symbols, --timeout-seconds, --fallback-glob and --verbose as request defaults.
 
         Options:
           --solution <path>         Solution file (.sln or .slnx) to analyze. Required.
@@ -68,10 +78,12 @@ public static class CliOptions
             return new ParseResult(null, ExitSuccess, Output.ToolInfo.Current);
         }
 
-        if (args[0] != "impact")
+        if (args[0] is not ("impact" or "serve"))
         {
             return new ParseResult(null, ExitUsage, $"unknown command '{args[0]}'\n\n{Usage}");
         }
+
+        var serve = args[0] == "serve";
 
         string? solution = null;
         string? baseRef = null;
@@ -115,7 +127,7 @@ public static class CliOptions
                     }
 
                     break;
-                case "--base":
+                case "--base" when !serve:
                     baseRef = Value();
                     if (string.IsNullOrWhiteSpace(baseRef))
                     {
@@ -123,7 +135,7 @@ public static class CliOptions
                     }
 
                     break;
-                case "--json":
+                case "--json" when !serve:
                     json = true;
                     break;
                 case "--verbose":
@@ -160,6 +172,21 @@ public static class CliOptions
         if (solution is null)
         {
             return Error("--solution is required");
+        }
+
+        if (serve)
+        {
+            return new ParseResult(null, null, null)
+            {
+                Serve = new ServeCommandOptions
+                {
+                    Solution = solution,
+                    Verbose = verbose,
+                    MaxSymbols = maxSymbols,
+                    TimeoutSeconds = timeout,
+                    FallbackGlobs = globs.Count > 0 ? globs : ImpactOptions.DefaultFallbackGlobs,
+                },
+            };
         }
 
         if (baseRef is null)

@@ -16,6 +16,9 @@ public static class FallbackKinds
     public const string Timeout = "timeout";
     public const string Error = "error";
     public const string AssemblySetup = "assemblySetup";
+
+    /// <summary>Server only: a build file changed and the workspace is being reloaded; the affected projects cannot be analyzed yet.</summary>
+    public const string WorkspaceReloading = "workspaceReloading";
 }
 
 public abstract record FileDisposition;
@@ -173,7 +176,7 @@ public static class FallbackPlanner
         return new IgnoredDisposition("not a source or build file");
     }
 
-    private static bool IsInGeneratedFolder(string path, string root)
+    internal static bool IsInGeneratedFolder(string path, string root)
     {
         var relative = PathUtil.IsUnder(path, root) ? Path.GetRelativePath(root, path) : path;
         var segments = relative.Split(new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar }, StringSplitOptions.RemoveEmptyEntries);

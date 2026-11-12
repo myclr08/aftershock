@@ -90,6 +90,14 @@ public sealed class GitClient
         return result.ExitCode == 0 && sha.Length >= 40 ? sha : null;
     }
 
+    /// <summary>Best common ancestor of two revisions (<c>git merge-base</c>), or null when there is none or a revision does not resolve.</summary>
+    public async Task<string?> MergeBaseAsync(string first, string second, CancellationToken cancellationToken = default)
+    {
+        var result = await RunAsync(new[] { "merge-base", "--end-of-options", first, second }, cancellationToken: cancellationToken).ConfigureAwait(false);
+        var sha = result.Text.Trim();
+        return result.ExitCode == 0 && sha.Length >= 40 ? sha : null;
+    }
+
     /// <summary>Tracked changes between <paramref name="commit"/> and the working tree (staged and unstaged), renames detected.</summary>
     public async Task<IReadOnlyList<GitDiffEntry>> DiffNameStatusAsync(string commit, CancellationToken cancellationToken = default)
     {

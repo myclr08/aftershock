@@ -77,7 +77,7 @@ public static class TextReport
         writer.WriteLine("Durations (ms): " + string.Join(", ", report.DurationsMs.Select(d => $"{d.Key} {d.Value}")));
     }
 
-    private static string Short(string commit) => commit.Length > 12 ? commit[..12] : commit;
+    private static string Short(string? commit) => commit is null ? string.Empty : commit.Length > 12 ? commit[..12] : commit;
 
     private static string StatusLetter(string status) => status switch
     {

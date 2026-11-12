@@ -25,21 +25,47 @@ public sealed record CallerEdge(ImmutableArray<ISymbol> Callers, DocumentId Docu
 
 /// <summary>
 /// Caches <see cref="SymbolFinder.FindReferencesAsync(ISymbol, Solution, CancellationToken)"/> results per symbol,
-/// sliced per document so that a long-running host can invalidate only what an edit touched:
-/// <see cref="InvalidateDocument"/> drops the document's slice of every entry and marks it stale; the next
-/// lookup searches only the stale documents again. Entries whose symbol is declared in the edited document are
-/// dropped completely. Symbols stored in entries belong to the solution snapshot they were computed from.
+/// sliced per document, so that a long-running host can invalidate only what an edit touched.
+/// <para>
+/// Entries are independent of the solution snapshot they were computed in: a slice stores only the positions of the
+/// references (bound to the searched symbol) in one document. Every lookup maps those positions to their enclosing
+/// members again, on the semantic model of the solution passed in, so the returned symbols always belong to the
+/// current compilation (symbols of an older snapshot would not be found by later lookups and would keep old
+/// compilations alive). The key of an entry is the project id plus the documentation comment id of the symbol.
+/// </para>
+/// <para>
+/// Invalidation rules (a cache must never hide a reference):
+/// <list type="bullet">
+/// <item><see cref="InvalidateDocumentReferences"/>: the document's text changed but its declarations did not (a body
+/// edit). Binding in other documents cannot change, so only the document's own slice of every entry is re-searched on
+/// the next lookup.</item>
+/// <item><see cref="InvalidateDocument"/>: additionally drops entries whose symbol is declared in the document.</item>
+/// <item><see cref="InvalidateProjects"/>: a declaration-level change (a member, type, signature or document added,
+/// removed or changed) can change what any document of the project, or of a project depending on it, binds to.
+/// Entries of symbols declared in those projects are dropped; every other entry re-searches all their documents.</item>
+/// </list>
+/// </para>
 /// </summary>
 public sealed class ReferenceCache
 {
     private readonly ConcurrentDictionary<string, Entry> _entries = new(StringComparer.Ordinal);
     private int _searches;
+    private int _scopedSearches;
     private int _hits;
 
+    /// <summary>Number of full reference searches (whole solution), cumulative.</summary>
     public int Searches => _searches;
 
+    /// <summary>Number of searches limited to the documents invalidated since the entry was cached, cumulative.</summary>
+    public int ScopedSearches => _scopedSearches;
+
+    /// <summary>Number of lookups answered without any search, cumulative.</summary>
     public int Hits => _hits;
 
+    /// <summary>Number of cached symbols.</summary>
+    public int Count => _entries.Count;
+
+    /// <summary>The document's text changed: drop entries of symbols declared in it and re-search its slice of the others.</summary>
     public void InvalidateDocument(DocumentId documentId)
     {
         foreach (var (key, entry) in _entries)
@@ -58,58 +84,148 @@ public sealed class ReferenceCache
         }
     }
 
+    /// <summary>
+    /// The document's text changed but its declarations are unchanged (top-level syntax equivalent): only its own
+    /// slice of every entry is re-searched. Also correct for a document that was added or removed when the caller
+    /// invalidates the owning projects as well.
+    /// </summary>
+    public void InvalidateDocumentReferences(DocumentId documentId)
+    {
+        foreach (var (_, entry) in _entries)
+        {
+            lock (entry.Gate)
+            {
+                entry.ByDocument.Remove(documentId);
+                entry.Stale.Add(documentId);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Declarations in <paramref name="projects"/> changed: entries of symbols declared in them are dropped, and every
+    /// document of those projects (source-generated ones included) is re-searched for the other entries. Pass the
+    /// changed projects together with every project that depends on them.
+    /// </summary>
+    public void InvalidateProjects(IReadOnlyCollection<ProjectId> projects)
+    {
+        if (projects.Count == 0)
+        {
+            return;
+        }
+
+        var set = projects.ToHashSet();
+        foreach (var (key, entry) in _entries)
+        {
+            lock (entry.Gate)
+            {
+                if (entry.DefinitionProject is null || set.Contains(entry.DefinitionProject))
+                {
+                    _entries.TryRemove(key, out _);
+                    continue;
+                }
+
+                foreach (var id in entry.ByDocument.Keys.Where(d => set.Contains(d.ProjectId)).ToList())
+                {
+                    entry.ByDocument.Remove(id);
+                }
+
+                entry.StaleProjects.UnionWith(set);
+            }
+        }
+    }
+
     public void Clear() => _entries.Clear();
 
     public async Task<IReadOnlyList<CallerEdge>> GetReferencesAsync(ISymbol symbol, Solution solution, CancellationToken cancellationToken)
     {
         var key = SymbolKeyOf(symbol, solution);
-        var entry = _entries.GetOrAdd(key, _ => new Entry(DefinitionDocumentsOf(symbol, solution)));
+        var entry = _entries.GetOrAdd(key, _ => new Entry(solution.GetProject(symbol.OriginalDefinition.ContainingAssembly)?.Id, DefinitionDocumentsOf(symbol, solution)));
 
+        IReadOnlyList<(DocumentId Document, TextSpan Span)> positions;
         await entry.Lock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (entry.Complete && entry.Stale.Count == 0)
+            if (entry.Complete && entry.Stale.Count == 0 && entry.StaleProjects.Count == 0)
             {
                 Interlocked.Increment(ref _hits);
-                return entry.Snapshot();
+                positions = entry.Snapshot();
             }
-
-            IImmutableSet<Document>? scope = null;
-            if (entry.Complete)
+            else
             {
-                scope = entry.Stale.Select(solution.GetDocument).OfType<Document>().ToImmutableHashSet();
-            }
-
-            Interlocked.Increment(ref _searches);
-            var found = await FindAsync(symbol, solution, scope, cancellationToken).ConfigureAwait(false);
-            lock (entry.Gate)
-            {
-                if (scope is not null)
+                IImmutableSet<Document>? scope = null;
+                List<DocumentId> staleDocuments;
+                List<ProjectId> staleProjects;
+                lock (entry.Gate)
                 {
-                    foreach (var id in entry.Stale)
+                    staleDocuments = entry.Stale.ToList();
+                    staleProjects = entry.StaleProjects.ToList();
+                }
+
+                if (entry.Complete)
+                {
+                    scope = await ScopeAsync(solution, staleDocuments, staleProjects, cancellationToken).ConfigureAwait(false);
+                }
+
+                Interlocked.Increment(ref scope is null ? ref _searches : ref _scopedSearches);
+                var found = await FindAsync(symbol, solution, scope, cancellationToken).ConfigureAwait(false);
+                lock (entry.Gate)
+                {
+                    if (scope is not null)
                     {
-                        entry.ByDocument.Remove(id);
+                        var projects = staleProjects.ToHashSet();
+                        foreach (var id in entry.ByDocument.Keys.Where(d => projects.Contains(d.ProjectId)).Concat(staleDocuments).ToList())
+                        {
+                            entry.ByDocument.Remove(id);
+                        }
+
+                        entry.Stale.ExceptWith(staleDocuments);
+                        entry.StaleProjects.ExceptWith(staleProjects);
                     }
-                }
-                else
-                {
-                    entry.ByDocument.Clear();
+                    else
+                    {
+                        entry.ByDocument.Clear();
+                        entry.Stale.Clear();
+                        entry.StaleProjects.Clear();
+                    }
+
+                    foreach (var group in found.GroupBy(e => e.Document))
+                    {
+                        entry.ByDocument[group.Key] = group.Select(e => e.Span).ToList();
+                    }
+
+                    entry.Complete = true;
                 }
 
-                foreach (var group in found.GroupBy(e => e.Document))
-                {
-                    entry.ByDocument[group.Key] = group.ToList();
-                }
-
-                entry.Stale.Clear();
-                entry.Complete = true;
-                return entry.Snapshot();
+                positions = entry.Snapshot();
             }
         }
         finally
         {
             entry.Lock.Release();
         }
+
+        return await MapAsync(positions, solution, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<IImmutableSet<Document>> ScopeAsync(Solution solution, IReadOnlyList<DocumentId> documents, IReadOnlyList<ProjectId> projects, CancellationToken cancellationToken)
+    {
+        var scope = new HashSet<Document>();
+        foreach (var id in documents)
+        {
+            var document = solution.GetDocument(id) ?? await solution.GetSourceGeneratedDocumentAsync(id, cancellationToken).ConfigureAwait(false);
+            if (document is not null)
+            {
+                scope.Add(document);
+            }
+        }
+
+        foreach (var project in projects.Select(solution.GetProject).OfType<Project>())
+        {
+            scope.UnionWith(project.Documents);
+            scope.UnionWith(await project.GetSourceGeneratedDocumentsAsync(cancellationToken).ConfigureAwait(false));
+        }
+
+        return scope.ToImmutableHashSet();
     }
 
     /// <summary>Project + documentation comment id; stable across snapshots of the same solution.</summary>
@@ -136,9 +252,9 @@ public sealed class ReferenceCache
         return result;
     }
 
-    private static async Task<List<CallerEdge>> FindAsync(ISymbol symbol, Solution solution, IImmutableSet<Document>? documents, CancellationToken cancellationToken)
+    private static async Task<List<(DocumentId Document, TextSpan Span)>> FindAsync(ISymbol symbol, Solution solution, IImmutableSet<Document>? documents, CancellationToken cancellationToken)
     {
-        var results = new List<CallerEdge>();
+        var results = new List<(DocumentId Document, TextSpan Span)>();
         if (documents is { Count: 0 })
         {
             return results;
@@ -157,15 +273,9 @@ public sealed class ReferenceCache
 
             foreach (var location in group.Locations)
             {
-                if (!location.Location.IsInSource)
+                if (location.Location.IsInSource)
                 {
-                    continue;
-                }
-
-                var edge = await MapAsync(location.Document, location.Location.SourceSpan, cancellationToken).ConfigureAwait(false);
-                if (edge is not null)
-                {
-                    results.Add(edge);
+                    results.Add((location.Document.Id, location.Location.SourceSpan));
                 }
             }
         }
@@ -191,22 +301,39 @@ public sealed class ReferenceCache
         };
     }
 
-    private static async Task<CallerEdge?> MapAsync(Document document, TextSpan span, CancellationToken cancellationToken)
+    /// <summary>Maps reference positions to their enclosing members on the semantic model of <paramref name="solution"/>.</summary>
+    private static async Task<IReadOnlyList<CallerEdge>> MapAsync(IReadOnlyList<(DocumentId Document, TextSpan Span)> positions, Solution solution, CancellationToken cancellationToken)
     {
-        var root = await document.GetSyntaxRootAsync(cancellationToken).ConfigureAwait(false);
-        var model = await document.GetSemanticModelAsync(cancellationToken).ConfigureAwait(false);
-        if (root is null || model is null)
+        var edges = new List<CallerEdge>(positions.Count);
+        foreach (var group in positions.GroupBy(p => p.Document))
         {
-            return null;
+            // A document is always searched in (or invalidated for) the snapshot it is mapped in, so it exists here;
+            // source-generated documents are looked up separately.
+            var document = solution.GetDocument(group.Key)
+                ?? await solution.GetSourceGeneratedDocumentAsync(group.Key, cancellationToken).ConfigureAwait(false);
+            if (document is null)
+            {
+                continue;
+            }
+
+            var root = await document.GetSyntaxRootAsync(cancellationToken).ConfigureAwait(false);
+            var model = await document.GetSemanticModelAsync(cancellationToken).ConfigureAwait(false);
+            if (root is null || model is null)
+            {
+                continue;
+            }
+
+            foreach (var (_, span) in group)
+            {
+                var callers = EnclosingMembers(root, model, span.Start, cancellationToken);
+                if (!callers.IsDefaultOrEmpty)
+                {
+                    edges.Add(new CallerEdge(callers, document.Id, span.Start, ClassifyUsage(root, span)));
+                }
+            }
         }
 
-        var callers = EnclosingMembers(root, model, span.Start, cancellationToken);
-        if (callers.IsDefaultOrEmpty)
-        {
-            return null;
-        }
-
-        return new CallerEdge(callers, document.Id, span.Start, ClassifyUsage(root, span));
+        return edges;
     }
 
     /// <summary>
@@ -390,8 +517,9 @@ public sealed class ReferenceCache
 
     private sealed class Entry
     {
-        public Entry(HashSet<DocumentId> definitionDocuments)
+        public Entry(ProjectId? definitionProject, HashSet<DocumentId> definitionDocuments)
         {
+            DefinitionProject = definitionProject;
             DefinitionDocuments = definitionDocuments;
         }
 
@@ -399,19 +527,24 @@ public sealed class ReferenceCache
 
         public SemaphoreSlim Lock { get; } = new(1, 1);
 
+        public ProjectId? DefinitionProject { get; }
+
         public HashSet<DocumentId> DefinitionDocuments { get; }
 
-        public Dictionary<DocumentId, List<CallerEdge>> ByDocument { get; } = new();
+        public Dictionary<DocumentId, List<TextSpan>> ByDocument { get; } = new();
 
         public HashSet<DocumentId> Stale { get; } = new();
 
+        /// <summary>Projects all of whose documents must be searched again.</summary>
+        public HashSet<ProjectId> StaleProjects { get; } = new();
+
         public bool Complete { get; set; }
 
-        public IReadOnlyList<CallerEdge> Snapshot()
+        public IReadOnlyList<(DocumentId Document, TextSpan Span)> Snapshot()
         {
             lock (Gate)
             {
-                return ByDocument.Values.SelectMany(v => v).ToList();
+                return ByDocument.SelectMany(pair => pair.Value.Select(span => (pair.Key, span))).ToList();
             }
         }
     }

@@ -1,10 +1,13 @@
 # Analyzer CLI (`aftershock-analyzer`)
 
-The analyzer is the C# half of Aftershock. Milestone M1 ships it as a one-shot command line tool:
-given a solution and a git base, it lists the **test methods** affected by the changes in the
-working tree, with a reason chain for each, or says which test projects must run completely
-(fallback). Later milestones reuse the same engine in a long-running server (M2) and call it
-from the VS Code extension (M3).
+The analyzer is the C# half of Aftershock. It has two modes over the same engine:
+
+- `impact` (M1): a one-shot command line tool. Given a solution and a git base, it lists the
+  **test methods** affected by the changes in the working tree, with a reason chain for each, or
+  says which test projects must run completely (fallback).
+- `serve` (M2): a long-running process that keeps the solution loaded and answers JSON-RPC
+  requests over stdio, so a save is analyzed in a fraction of a second. The VS Code extension (M3)
+  talks to it. See [Server mode](#server-mode-serve).
 
 ## Requirements
 
@@ -21,6 +24,14 @@ from the VS Code extension (M3).
 dotnet build analyzer/Aftershock.Analyzer.sln -c Release
 dotnet analyzer/src/Aftershock.Analyzer/bin/Release/net8.0/aftershock-analyzer.dll \
   impact --solution path/to/App.sln --base origin/main --json
+```
+
+The server mode is started the same way and then driven over stdin/stdout (see
+[Server mode](#server-mode-serve)):
+
+```bash
+dotnet analyzer/src/Aftershock.Analyzer/bin/Release/net8.0/aftershock-analyzer.dll \
+  serve --solution path/to/App.sln
 ```
 
 Run the analyzer tests (they copy `samples/ImpactSample` to a temp folder, `git init` it and
@@ -188,7 +199,8 @@ Example (abridged: one of six selected tests and one of two test projects shown)
 |---|---|
 | `schemaVersion` | `1`. Additive changes keep the number; breaking changes increment it. |
 | `solution`, `repositoryRoot` | Absolute paths. The solution may sit anywhere below the repository root. |
-| `base`, `baseCommit` | The ref as given and the full commit id it resolved to. |
+| `base`, `baseCommit` | The ref as given and the full commit id it resolved to. Not present in the server's snapshot mode (`impact` request). |
+| `mergeBaseOf` | Server base mode only: `"HEAD"` when `baseCommit` is the merge base of HEAD and `base`. Not present otherwise. |
 | `durationsMs` | `git` (status + old contents), `workspaceLoad`, `diff` (line diff), `memberMapping` (syntactic mapping + symbol resolution), `compilation` (compiling the changed projects and their dependents; not limited by the timeout), `referenceSearch` (BFS, limited by `--timeout-seconds`), `engineTotal`, `total`. |
 | `changedFiles[]` | `path`, `oldPath` (renames), `fullPath`, `status` (`added`, `modified`, `deleted`, `renamed`, `untracked`), `analysis` (`selective`, `fallback`, `ignored`), `note` (why it fell back or was ignored). |
 | `changedSymbols[]` | Confirmed changed members. `symbol` (C# signature), `kind` (`method`, `constructor`, `staticConstructor`, `destructor`, `operator`, `conversion`, `property`, `indexer`, `getter`, `setter`, `init`, `event`, `field`, `enumMember`, `type`, `entryPoint`), `file`, `line`, `reason`, `detail`. |
@@ -204,7 +216,7 @@ Example (abridged: one of six selected tests and one of two test projects shown)
 | `tests[].reason` | `changedTest` (the test itself changed), `referenceChain`, `classLifecycle` (constructor/setup/teardown/Dispose of its class or a base class was reached), `fixture` (a fixture of the class was reached), `dataSource` (a MemberData/ClassData/TestCaseSource/DynamicData source was reached). |
 | `tests[].chain` | Ordered from the changed symbol to the test, `Type.Member` labels: constructors are `Type..ctor`, accessors `Type.Property.get` / `.set`, symbols that only exist in the base snapshot end with ` (removed)`. The chain is a shortest path. |
 | `testProjects[]` | Every test project to build: `name`, `path`, `mode` (`all` when any fallback covers it, otherwise `filter`), `tests` (selected methods in it), `frameworks`. |
-| `stats` | `visitedSymbols`, `referenceSearches`, `cacheHits`. |
+| `stats` | `visitedSymbols`, `referenceSearches` (full searches), `cacheHits` (answered from the reference cache), `scopedSearches` (server only, omitted when 0: cached lookups that re-searched only the documents edited since). |
 | `diagnostics[]` | `severity` (`error`, `warning`), `source` (`workspace`, `compilation`, `analysis`), `message`. Every `MSBuildWorkspace` failure/warning and every compile error summary ends up here (and on stderr). |
 
 ### Fallback kinds
@@ -224,6 +236,7 @@ Example (abridged: one of six selected tests and one of two test projects shown)
 | `timeout` | The reference search exceeded `--timeout-seconds` (the file being searched and every file not searched yet) | Dependents of those files' projects |
 | `error` | The analysis of a file threw | Dependents of the file's projects |
 | `assemblySetup` | The search reached MSTest `[AssemblyInitialize]`/`[AssemblyCleanup]`, an NUnit `[SetUpFixture]`, or an xUnit v3 assembly fixture | That test project |
+| `workspaceReloading` | Server only: a build file changed and the workspace reload has not finished (added to requests with a C# change) | Dependents of the projects whose build files changed |
 
 Fallbacks and selective results coexist: files that fall back contribute whole projects, the
 other files contribute individual tests. A project that is both is reported once with
@@ -242,6 +255,291 @@ NUnit3TestAdapter 5.0, MSTest 3.11):
   `FullyQualifiedName~Ns.Class.Method\(`. Non-parameterized NUnit tests can use `=`.
 - Inherited tests are reported per concrete class (`Ns.Derived.Method`), which is the name all
   three adapters use.
+
+## Server mode (`serve`)
+
+```
+aftershock-analyzer serve --solution <path.sln> [--max-symbols <n>] [--timeout-seconds <n>]
+                          [--fallback-glob <glob>]... [--verbose]
+```
+
+The server loads the solution once, keeps the `MSBuildWorkspace` warm and answers requests until
+it is told to stop. The options have the same meaning as for `impact` and are the defaults of every
+request; `initialize` and each analysis request can override them.
+
+- **Streams:** stdin and stdout carry protocol messages only. Logs go to stderr
+  (`[aftershock] level: ...`) and are also sent as `log` notifications.
+- **Exit codes:** `0` after `shutdown` + `exit`, or when stdin reaches end of input; `1` when
+  `exit` arrives without a prior `shutdown`, or MSBuild / the .NET SDK cannot be located; `2` usage
+  error (bad arguments, solution file not found).
+- Child processes the analyzer starts (git, the MSBuild build host) get `MSBUILDDISABLENODEREUSE=1`
+  and `DOTNET_CLI_USE_MSBUILD_SERVER=0` (see DESIGN.md 6.1.1).
+
+### Framing
+
+- **JSON-RPC 2.0, one JSON object per line** (UTF-8, terminated by `\n`; `\r\n` and a leading BOM
+  are accepted on input). There are no `Content-Length` headers. Messages never contain a raw line
+  break; line breaks inside strings are escaped.
+- A request has an `id` (number or string), a notification has none. `params` is an object (named
+  parameters) or omitted. Batches (JSON arrays) are rejected with `-32600`.
+- Requests run concurrently and responses can arrive out of order: match them by `id`. Analyses
+  themselves are serialized; the time a request waited is reported as `durationsMs.queue`.
+
+### Lifecycle
+
+1. Start the process. Loading the solution starts immediately.
+2. Send `initialize`. It is answered once the workspace is loaded. Before it, every request except
+   `initialize`, `status` and `shutdown` fails with `-32002`.
+3. After the load the server warms up in the background (creates every compilation and runs one
+   reference search, so the first save does not pay for it); `progress` notifications report
+   `warmUp`, then `ready`. Requests sent meanwhile wait for it.
+4. Send `impact` on every save, `impactSinceBase` when coverage needs the full new code of a file,
+   `reload` and `status` as needed.
+5. Send `shutdown` (cancels in-flight requests, answers `null`; later requests fail with `-32600`),
+   then the `exit` notification. Closing stdin also stops the server.
+
+### `initialize`
+
+| Param | Type | Meaning |
+|---|---|---|
+| `options` | object | Optional new defaults: `maxSymbols`, `timeoutSeconds`, `fallbackGlobs` (as in the CLI options table). |
+| `logLevel` | string | Minimum level of `log` notifications: `debug`, `info` (default), `warning`, `error`, `off`. `debug` also writes debug lines to stderr. |
+| `solution` | string | Optional; must name the solution the server was started with. |
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"logLevel":"info"}}
+```
+
+Result (abridged: one of four test projects shown):
+
+```json
+{
+  "protocolVersion": 1,
+  "schemaVersion": 1,
+  "tool": { "name": "aftershock-analyzer", "version": "0.1.0" },
+  "solution": "C:\\src\\shop\\samples\\ImpactSample\\ImpactSample.sln",
+  "repositoryRoot": "C:\\src\\shop",
+  "msbuild": ".NET Core SDK 10.0.108 (C:\\Program Files\\dotnet\\sdk\\10.0.108)",
+  "workspace": {
+    "generation": 1, "projects": 6, "documents": 68, "loadMs": 1167, "warmUpMs": 0,
+    "testProjects": [
+      {
+        "name": "Sample.Tests.NUnit",
+        "path": "C:\\src\\shop\\samples\\ImpactSample\\tests\\Sample.Tests.NUnit\\Sample.Tests.NUnit.csproj",
+        "frameworks": ["nunit"]
+      }
+    ]
+  },
+  "options": { "maxSymbols": 500, "timeoutSeconds": 10, "fallbackGlobs": ["**/appsettings*.json"] },
+  "capabilities": { "impactSinceBase": true, "cancellation": true, "supersede": true },
+  "diagnostics": []
+}
+```
+
+`protocolVersion` covers the methods and notifications on this page, `schemaVersion` the impact
+reports; additive changes keep both numbers. `repositoryRoot` is `null` and
+`capabilities.impactSinceBase` is `false` when the solution is not inside a git work tree.
+`diagnostics` are the workspace load diagnostics. If the load fails, `initialize` fails with
+`-32001`; `reload` tries again.
+
+### `impact` (snapshot mode, on save)
+
+| Param | Type | Meaning |
+|---|---|---|
+| `files` | string[] | Required (may be empty). Saved files: absolute paths, paths relative to the solution folder, or `file:` URIs. |
+| `options` | object | Optional per-request `maxSymbols`, `timeoutSeconds`, `fallbackGlobs`. |
+| `supersede` | boolean | Default `true`: cancel every earlier `impact` request that is still running or queued. |
+
+```json
+{"jsonrpc":"2.0","id":7,"method":"impact","params":{"files":["C:\\src\\shop\\samples\\ImpactSample\\src\\Sample.Core\\Shipping\\ExpressShipping.cs"]}}
+```
+
+**Snapshots.** The server keeps the last analyzed content of every C# file (initially the content
+at load time). For each file, `impact` reads the **saved content from disk** (never an editor
+buffer), compares it with the snapshot, updates the warm workspace in memory
+(`Solution.WithDocumentText`, no reload) and runs the same engine as the CLI. Snapshots advance only
+when the request returns a result. The report therefore describes the change since the previous
+successful `impact` of that file: saving twice reports only the second edit, and a comment-only
+edit selects nothing.
+
+Every `impact` also includes the **pending** files: files of earlier `impact` requests that were
+cancelled, superseded or failed, and files whose content changed behind the snapshot (seen by
+`impactSinceBase` or by a reload). A change is therefore never lost; it shows up in the next
+`impact` that returns a result. `status` lists the pending files.
+
+**Files.**
+
+- A changed C# file is updated in place; a deleted one is removed and analyzed in the old
+  snapshot, like a deleted file in the CLI.
+- A new C# file is added to the C# project(s) whose folder is the deepest one containing it (SDK
+  default compile items assumed; `bin/` and `obj/` excluded). A file that already existed below a
+  project at load time without being part of it (excluded with `Compile Remove`, for example) stays
+  out and falls back with `notInWorkspace`, as in the CLI. `reload` re-reads the exact project
+  contents.
+- Other files are classified like in the CLI (`buildFile`, `fallbackGlob`, `unsupportedFile`,
+  ignored). A **build file** (`*.csproj`, `Directory.Build.*`, `Directory.Packages.props`,
+  `global.json`, `nuget.config`, other `*.props`/`*.targets`, `packages.lock.json`) or the
+  solution file itself is answered with its fallback **and** starts a background reload (below).
+
+**Result:** the [JSON report](#json-report-schema-version-1) with these differences:
+
+- `base` and `baseCommit` are not present.
+- `changedFiles` lists only files whose content differs from their snapshot; `status` is `added`,
+  `modified` or `deleted` (a rename arrives as a deleted and an added file).
+- `durationsMs`: `queue` (waiting for an earlier request or the warm-up), `workspaceUpdate` (reading
+  files, updating the workspace), `cacheSync` (reference cache invalidation), then the engine phases
+  as in the CLI (`compilation`, `diff`, `memberMapping`, `referenceSearch`, `engineTotal`), `total`.
+  There is no `workspaceLoad`.
+- `diagnostics` are this request's. Compile errors are checked in the changed documents only
+  (the CLI checks every affected project).
+- `stats.scopedSearches` counts reference lookups served from the cache that only re-searched the
+  edited documents.
+
+### `impactSinceBase` (base mode)
+
+| Param | Type | Meaning |
+|---|---|---|
+| `base` | string | Required. Any git revision (`origin/main`, a branch, a SHA). |
+| `mergeBase` | boolean | Default `true`: compare with `git merge-base HEAD <base>` (new code of the branch, as the coverage gate sees it). `false`: compare with `<base>` itself, exactly like the CLI's `--base`. |
+| `files` | string[] | Optional: analyze only these files of the change set (paths as in `impact`). The workspace is still updated for every changed file. |
+| `options`, `supersede` | | As for `impact` (supersede applies to earlier `impactSinceBase` requests). |
+
+The change set is the CLI's (tracked changes of the working tree against the base commit, renames,
+deletions, untracked files), analyzed on the warm workspace. The result is the CLI report with
+`base` (as given), `baseCommit` (the commit compared with) and, when the merge base was used,
+`mergeBaseOf: "HEAD"`. Snapshots of `impact` do not advance; files whose content the server sees
+for the first time become pending for the next `impact`.
+
+For M4 coverage (DESIGN.md 7.4), `{"base": "<target branch>", "files": ["<saved file>"]}` returns the
+tests of **all** members of the saved file that are new relative to the target branch.
+
+Errors: `-32602` when the revision does not resolve or HEAD and it have no merge base; `-32600`
+when the solution is not in a git work tree.
+
+### `reload`
+
+No params. Reloads the solution from disk into a new workspace and swaps it in. The response
+arrives when a reload that started after the request has finished:
+
+```json
+{
+  "success": true,
+  "reason": "requested by the client",
+  "durationMs": 927,
+  "workspace": { "generation": 2, "projects": 6, "documents": 68, "loadMs": 810, "warmUpMs": 112, "testProjects": [] },
+  "pendingFiles": [],
+  "diagnostics": []
+}
+```
+
+(`testProjects` abridged.) Cancelling the request does not stop the reload.
+
+### `status`
+
+No params. Answers immediately, also during a load or an analysis:
+`state` (`loading`, `ready`, `failed`, `shuttingDown`), `initialized`, `solution`,
+`repositoryRoot`, `tool`, `protocolVersion`, `uptimeMs`, `requestsServed`, `inFlight[]`
+(`id`, `method`), `options`, `workspace` (as in `initialize`), `reloading`, `allProjectsDirty`,
+`dirtyProjects[]` (project files waiting for a reload), `pendingFiles[]`, `cache` (`symbols`,
+`searches`, `scopedSearches`, `hits`, cumulative), `loadError`.
+
+### `shutdown` and `exit`
+
+`shutdown` cancels every other request (they fail with `-32800`, reason `shutdown`) and answers
+`null`. The `exit` notification then stops the process.
+
+### Notifications (server to client)
+
+| Method | Params |
+|---|---|
+| `log` | `level` (`debug`, `info`, `warning`, `error`), `message`, `id` (the request that logged it, if any). Filtered by `initialize`'s `logLevel`. |
+| `progress` | `phase`, `id` and `method` of the request, `message`. Background phases: `load`, `warmUp`, `ready`, `reload` (message: the reason). Request phases: `queued`, `git` (base mode), `updateWorkspace`, `classify`, `compile`, `resolve`, `search`, `report`. |
+| `workspaceReloaded` | The `reload` result shape, after every background or requested reload (`success: false` and `error` when it failed). |
+
+Example:
+
+```json
+{"jsonrpc":"2.0","method":"progress","params":{"id":7,"method":"impact","phase":"search"}}
+```
+
+### Cancellation and supersede
+
+- `$/cancelRequest` with `{"id": <id>}` cancels a request.
+- A new `impact` cancels every earlier `impact` that is still running or waiting (the extension
+  sends one per save); the same holds for `impactSinceBase`. Pass `"supersede": false` to keep
+  them.
+- A cancelled request fails with `-32800` and
+  `"data": {"reason": "cancelled" | "superseded" | "shutdown", "by": <id of the superseding request>}`.
+  It has not advanced any snapshot: its files are included in the next `impact`.
+- A request whose analysis has already finished cannot be cancelled any more and returns its
+  result. **Every successful `impact` result counts**, also one for a request the client meant to
+  supersede: merge its tests into the next run.
+
+### Background reload
+
+A build-file change, a solution-file change or `reload` loads a new workspace in the background
+while requests keep being answered on the current one. Until a reload caused by build files has
+finished, every analysis that contains a C# change adds the fallback reason `workspaceReloading`
+for the test projects that depend on the projects whose build files changed (every project for
+solution-wide files such as the root `Directory.Build.props`). When the new workspace is swapped in:
+
+- the reference cache is cleared and the warm-up runs again;
+- files whose content differs between the old and the new workspace (changed on disk without a
+  request, added to or removed from a project) become pending, so the next `impact` reports them;
+- `workspaceReloaded` is sent.
+
+A failed reload keeps the current workspace and the `workspaceReloading` fallback; `reload` tries
+again. MSBuild and the SDK are chosen once per process (`global.json` next to the solution is read
+at start): after an SDK change in `global.json`, restart the server.
+
+### Errors
+
+| Code | When |
+|---|---|
+| `-32700` | The line is not valid JSON (answered with `"id": null`). |
+| `-32600` | Not a JSON-RPC 2.0 request (no `jsonrpc: "2.0"`, no `method`, a batch, an id that is not a number or string), a duplicate `initialize`, a request after `shutdown`, base mode without git, an id that is still in progress. |
+| `-32601` | Unknown method. Unknown notifications are ignored. |
+| `-32602` | Invalid params (missing `files` or `base`, wrong types, a revision that does not resolve). |
+| `-32603` | Unexpected failure of one request; the server keeps running. |
+| `-32001` | The workspace could not be loaded. |
+| `-32002` | Request before `initialize`. |
+| `-32800` | Cancelled, superseded or stopped by `shutdown` (see above). |
+
+### Reference cache
+
+Reference searches are cached per symbol and per document across requests. A cache entry stores
+only where the references are (document and span); every lookup maps them again to their enclosing
+members on the current compilation, so a result never contains symbols of an older snapshot.
+Before each analysis the cache is brought in line with the workspace:
+
+- a document whose declarations did not change (only method bodies or non-constant initializers;
+  Roslyn's top-level syntax equivalence) has only its own references searched again, together with
+  the source-generated documents of its project;
+- any other change (a member, type, signature, attribute, constant or document added, removed or
+  changed) can change what other documents bind to, so the entries of symbols declared in that
+  project and its dependents are dropped and every document of those projects is searched again.
+
+A cache never hides a reference: the test suite runs every server analysis a second time with an
+empty cache and requires identical results.
+
+### Performance (Linux, .NET SDK 10.0.108)
+
+Generated solution of the M1 measurements (4 projects, 715 documents, 2,400 xUnit tests). The
+load takes 1.0 s, the background warm-up 1.4 s. Then one `impact` per save, each a body edit of one
+method (`Service<n>.Run`), times as reported in `durationsMs.total`:
+
+| Change | First save of it | Repeated edits of the same method |
+|---|---|---|
+| One method reaching 51 tests (71 symbols) | 0.67 s (1.9 s when saved during the warm-up) | 0.15-0.19 s |
+| Methods reaching 4-241 tests | 0.13-0.44 s | 0.11-0.18 s |
+| A method reaching 728 tests (974 symbols) | 0.65-0.91 s | 0.23-0.27 s |
+| A hub over 300 services (falls back: `bfsLimit`) | 1.0 s | 0.26 s |
+| A new member (declaration change), then a body edit in another file | 0.23 s, then 0.27-0.31 s | 0.12-0.13 s |
+
+Two runs of 25 requests each; the process used about 350 MB (RSS) afterwards. The one-shot CLI
+needs 2.5-3.7 s for the same changes (load and compile included). Every selective result matched
+the generator's call graph. Typical changes stay well below the 2 s at which DESIGN.md 5.6 calls
+for a reverse call index, so there is none.
 
 ## How tests are selected
 
@@ -284,9 +582,9 @@ NUnit3TestAdapter 5.0, MSTest 3.11):
    `[DynamicData]`.
 4. **Fallback** as in the table above.
 
-## Engine API (for the server mode)
+## Engine API
 
-The CLI is a thin front-end over `Aftershock.Analyzer.Engine.ImpactEngine`:
+Both modes are thin front-ends over `Aftershock.Analyzer.Engine.ImpactEngine`:
 
 ```csharp
 var engine = new ImpactEngine(log, cache);           // cache: ReferenceCache, may be kept between calls
@@ -296,11 +594,21 @@ ImpactResult result = await engine.AnalyzeAsync(solution, changes, options, canc
 - `solution` is the **current** state (an `MSBuildWorkspace` solution, possibly updated in memory
   with `WithDocumentText`).
 - `changes` are `FileChange(Path, Kind, OldPath, OldText, NewText, ...)` records: "old snapshot vs
-  new content" per file. The CLI fills them from git; a server fills them from its own
-  per-document snapshots. Git is not used by the engine.
-- `ReferenceCache` stores reference search results per symbol, sliced per document.
-  `InvalidateDocument(documentId)` drops one document's slice from every entry (the next lookup
-  re-searches only that document) and drops entries whose symbol is declared in it.
+  new content" per file. The CLI fills them from git; the server fills them from its per-file
+  snapshots (or from git in base mode). Git is not used by the engine.
+- `options` (`ImpactOptions`, a record): `MaxSymbols`, `Timeout`, `FallbackGlobs`,
+  `RepositoryRoot`, plus for hosts: `CompileErrors` (`AffectedProjects`, the CLI default, or
+  `ChangedDocuments`), `HostFallbacks` (fallback reasons decided by the host, such as
+  `workspaceReloading`) and `OnPhase` (progress callback).
+- `ReferenceCache` stores, per symbol (project id + documentation comment id) and per document,
+  the spans of the references bound to that symbol, and maps them to their enclosing members on
+  the solution of each lookup. `InvalidateDocumentReferences(documentId)` (text changed,
+  declarations unchanged) re-searches one document's slice of every entry;
+  `InvalidateDocument(documentId)` also drops the entries declared in it;
+  `InvalidateProjects(projectIds)` (declaration change; pass the changed projects with their
+  dependents) drops the entries declared in them and re-searches all their documents for the
+  others. `Aftershock.Analyzer.Server.WorkspaceSession` shows how a host keeps the cache in line
+  with its solution.
 - `MSBuildSetup.Register(workingDirectory)` must run before any workspace type is used.
 
 ## Measured performance (Linux, .NET SDK 10.0.108)
@@ -312,8 +620,8 @@ ImpactResult result = await engine.AnalyzeAsync(solution, changes, options, canc
 | same | one method reaching 728 tests (123 callers) | 1.0 s | 0.9 s | 1.2 s | 3.2 s |
 | same | a hub reaching 300 services | | | 1.6 s | 3.7 s (falls back: `bfsLimit`) |
 
-Load and compile happen once per process; in the server mode (M2) only the reference search is
-paid per save.
+Load and compile happen once per process; in the server mode only the reference search is paid
+per save (see [server performance](#performance-linux-net-sdk-100108)).
 
 ## Known limitations
 
@@ -330,3 +638,14 @@ paid per save.
 - Test projects are recognized by their reference to `xunit.core`, `xunit.v3.core`,
   `nunit.framework` or the MSTest framework assembly.
 - The timeout covers only the reference search; compiling a cold solution is measured separately.
+
+Server mode only:
+
+- The server sees a file change when a request names the file (or after `reload`). Files changed
+  on disk without being named, for example by a branch switch, are picked up by `reload` (they
+  become pending) or when they are saved.
+- A new C# file is assigned to the project that owns its folder; projects that disable default
+  compile items or link files from other folders are only exact after `reload`.
+- Non-C# files named in an `impact` request always count as changed (they have no snapshot):
+  saving a project file without changing it still falls back and reloads.
+- An SDK change through `global.json` needs a server restart.

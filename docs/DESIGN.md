@@ -91,13 +91,29 @@ Priorities:
   1. **One-shot CLI** (built first, testable on its own):
      `analyzer impact --solution X.sln --base <git-ref> [--json]` prints the impacted tests
      and their reason chains. The contract is in [analyzer-cli.md](analyzer-cli.md).
-  2. **Server mode**: line-delimited JSON requests and responses over stdio (JSON-RPC 2.0
-     framing is acceptable). The workspace stays warm. On file changes the analyzer updates
-     the in-memory solution with `Solution.WithDocumentText(...)` instead of reloading.
-     Project file changes trigger a reload of the affected projects.
-- Keeps the last analyzed text of every document (a snapshot) so it can compute which
-  members changed between two saves.
-- Logs go to stderr. Stdout carries only protocol messages.
+  2. **Server mode** (M2): `analyzer serve --solution X.sln` speaks newline-delimited
+     JSON-RPC 2.0 over stdio (`initialize`, `impact`, `impactSinceBase`, `reload`, `status`,
+     `shutdown`/`exit`; notifications `log`, `progress`, `workspaceReloaded`; `$/cancelRequest`).
+     The contract is in [analyzer-cli.md](analyzer-cli.md#server-mode-serve).
+- Server mode keeps the workspace warm:
+  - Every document text is pinned in memory at load (Roslyn may otherwise drop a file-backed text
+    and silently re-read a newer version from disk). Saved files are read from disk and applied
+    with `Solution.WithDocumentText(...)`; new files are added to the project that owns their
+    folder, deleted files are removed.
+  - It keeps the last analyzed text of every file (a snapshot). `impact` diffs snapshot vs disk
+    with the M1 engine and advances the snapshot only when the request returns a result; files of
+    cancelled or superseded requests stay pending and are included in the next `impact`.
+  - `impactSinceBase` runs the CLI's git change set (by default against `git merge-base HEAD
+    <target>`) on the warm workspace; it is what M4 needs for the new code of a saved file.
+  - Analyses are serialized; a new `impact` cancels the running one (supersede). A request that
+    has already committed its snapshots returns its result.
+  - Project-level changes (build files, the solution file) are answered with their fallback and
+    reload the workspace in the background. Requests keep being answered on the old workspace;
+    until the reload is done, analyses add a `workspaceReloading` fallback for the dependents of
+    the projects whose build files changed. After the swap, files whose content differs between the
+    two workspaces become pending.
+- Logs go to stderr (in server mode also as `log` notifications). Stdout carries only protocol
+  messages or the CLI report.
 
 ### 4.2 extension (TypeScript)
 
@@ -279,16 +295,33 @@ The reason is always shown in the status bar tooltip and the output channel.
 
 ### 5.6 Performance
 
-- First version: reference searches run on demand and are cached per symbol
-  (`ReferenceCache`). Results are stored per document, so an update invalidates only the
-  edited document's slice of every entry (the next lookup re-searches just that document) and
-  drops entries whose symbol is declared in it.
+- Reference searches run on demand and are cached per symbol (`ReferenceCache`). An entry stores
+  only the spans of the references, per document; every lookup maps them to their enclosing
+  members on the current compilation, so cached results never carry symbols of an older solution
+  snapshot (which later lookups would not find, and which would keep old compilations alive).
+- Invalidation, before every server analysis (correctness first: a cache must never hide a
+  reference):
+  - A document whose declarations are unchanged (Roslyn's top-level syntax equivalence: only
+    method bodies and non-constant initializers differ) cannot change what other documents bind
+    to. Only its own slice of every entry, and the source-generated documents of its project, are
+    searched again. This is the typical save.
+  - Any other change (member, type, signature, attribute, constant, document added or removed,
+    project references or options) invalidates the project and its dependents: entries of symbols
+    declared there are dropped, every document there is searched again for the other entries.
+  - A reload clears the cache.
+  - The tests run every server analysis a second time with an empty cache and require identical
+    results.
+- In the server, compile errors are checked for the changed documents only; binding whole
+  dependent projects on every save would cost more than the analysis.
 - Measured in M1 (Linux): the sample solution analyzes in about 0.2 s after a 1.1 s load and
   0.8 s compile; a generated solution with 715 documents and 2,400 xUnit tests needs 0.4-1.2 s
   of reference search for changes reaching 9-728 tests (see analyzer-cli.md).
-- The analysis time of every request is logged. If typical changes take more than 2 s on a
-  real solution, build a reverse call index at startup (callee -> callers) and update it
-  incrementally per document.
+- Measured in M2 on the same generated solution, server mode: the first save after the warm-up
+  takes 0.13-0.9 s depending on the reach (4-728 tests), repeated edits of a method 0.12-0.27 s, a
+  declaration change 0.24 s. The analysis time of every request is logged per phase.
+- The design called for a reverse call index (callee -> callers, built at startup) if typical
+  changes took more than 2 s. They take well under 1 s warm, so there is none; revisit with
+  numbers from a real large solution.
 - The workspace is loaded once in server mode. A full reload is only needed after project
   file changes.
 
@@ -442,6 +475,8 @@ Each run executes only the selected tests, so coverage is stored **per file** an
   The file's new-code coverage is therefore recomputed completely in every run.
 - Files that were not part of a run keep their last coverage until they change.
 - Calculations always use the saved content on disk, never unsaved editor buffers.
+- The analyzer's `impactSinceBase` request with `files: [saved file]` and the target branch as
+  `base` returns the tests of all new members of that file (against the merge base).
 
 ## 8. Sonar integration
 
