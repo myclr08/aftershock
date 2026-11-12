@@ -315,6 +315,7 @@ class AftershockController implements vscode.Disposable {
       // Kill a running build/test (bounded), then stop the analyzer.
       await Promise.race([session.orchestrator.dispose(), new Promise((resolve) => setTimeout(resolve, 5000))]);
       await session.analyzer.stop();
+      await session.coverage.flushed();
       this.decorations.clear();
     }
   }

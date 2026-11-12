@@ -171,6 +171,7 @@ beforeAll(async () => {
 afterAll(async () => {
   orchestrator?.dispose();
   await analyzer?.stop();
+  await coverage?.flushed();
   const report = ['', 'Aftershock coverage e2e:', ...timings.map((t) => `  ${t}`), ''].join('\n');
   process.stdout.write(report);
   if (process.env.AFTERSHOCK_E2E_REPORT) {

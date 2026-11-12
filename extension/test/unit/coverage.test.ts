@@ -11,8 +11,13 @@ import type { RunnerMode } from '../../src/core/runnerMode';
 import type { ProjectPlan } from '../../src/core/work';
 import { tempDir, writeFile } from './helpers';
 
-const cleanups: (() => void)[] = [];
-afterEach(() => cleanups.splice(0).forEach((c) => c()));
+const cleanups: (() => void | Promise<void>)[] = [];
+// Cleanups run in reverse: pending store writes are flushed before the temp dir is removed.
+afterEach(async () => {
+  for (const c of cleanups.splice(0).reverse()) {
+    await c();
+  }
+});
 
 function git(repo: string, ...args: string[]): void {
   const result = spawnSync('git', ['-c', 'user.name=Unit', '-c', 'user.email=unit@example.invalid', '-c', 'commit.gpgsign=false', ...args], { cwd: repo, encoding: 'utf8' });
@@ -109,6 +114,10 @@ class FakeAnalyzer implements CoverageAnalyzer {
 function setup(options: { packages?: string[]; tool?: CoverageSettings['tool'] } = {}) {
   const { dir, cleanup } = tempDir('aftershock-cov-');
   cleanups.push(cleanup);
+  const managers: CoverageManager[] = [];
+  cleanups.push(async () => {
+    await Promise.all(managers.map((m) => m.flushed()));
+  });
   const repo = path.join(dir, 'repo');
   const a = path.join(repo, 'src', 'App', 'A.cs');
   const b = path.join(repo, 'src', 'App', 'B.cs');
@@ -137,8 +146,8 @@ function setup(options: { packages?: string[]; tool?: CoverageSettings['tool'] }
   const policy: CoveragePolicy = { thresholdPercent: 85, thresholdSource: 'setting', exclusions: [] };
   const storeFile = path.join(dir, 'storage', 'coverage.json');
   let clock = 1000;
-  const make = () =>
-    new CoverageManager({
+  const make = () => {
+    const manager = new CoverageManager({
       solutionDirectory: repo,
       storeFile,
       analyzer,
@@ -147,6 +156,9 @@ function setup(options: { packages?: string[]; tool?: CoverageSettings['tool'] }
       policy: () => policy,
       now: () => ++clock,
     });
+    managers.push(manager);
+    return manager;
+  };
   const coverage = make();
   let runCount = 0;
 
